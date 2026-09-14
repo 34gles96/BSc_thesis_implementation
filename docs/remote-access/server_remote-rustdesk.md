@@ -3,7 +3,7 @@
 Ez az útmutató bemutatja, hogyan tudsz távoli grafikus asztali kapcsolatot (GUI) létesíteni a gépek között a **RustDesk** nyílt forráskódú távoli asztal kliens segítségével Linux, Windows és macOS rendszereken.
 
 > [!WARNING]
-> **BeamNG.drive és járműszimuláció futtatására a RustDesk NEM alkalmas!**
+> **BeamNG.tech és járműszimuláció futtatására a RustDesk NEM alkalmas!**
 > A 3D-s szimulátorokhoz és játékokhoz (mint a BeamNG) **Sunshine + Moonlight** kapcsolatot kell használni!
 
 ---
@@ -19,7 +19,7 @@ A RustDesk a TeamViewer és az AnyDesk biztonságos, nyílt forráskódú altern
 ---
 
 ### ❌ Mire NEM jó a RustDesk?
-* **3D szimulációk és játékok (pl. BeamNG.drive):** 
+* **3D szimulációk és játékok (pl. BeamNG.tech):** 
   * A RustDesk nem kezeli a raw mouse capture / relative mouse input módokat. Játék közben az egérkurzor eltűnhet, megakadhat a képernyő szélén, vagy a kamera irányíthatatlanul körbeforog.
   * Nem játékra optimalizált hardveres kódolást (NVENC) használ, így a képkockasebesség (FPS) alacsony, a beviteli késleltetés (input lag) pedig túl magas a precíz járműirányításhoz.
   * Nem kezeli natívan a fizikai kontrollereket és játékvezérlőket (DirectInput / XInput átvitel hiánya).

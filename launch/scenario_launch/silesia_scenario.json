@@ -1,0 +1,107 @@
+{
+    "version": 1.0,
+    "level": "silesia_ring",
+    "name": "silesia_scenario",
+    "network_visualization": "on",
+    "vehicles": [
+        {
+            "name": "ego",
+            "model": "wigeon",
+            "part_config": "/vehicles/wigeon/test.pc",
+            "player": true,
+            "pos": [
+                -7.635427,
+                -271.949188,
+                330.449677
+            ],
+            "rot": [
+                -0.001647,
+                -0.00272,
+                -0.5671,
+                0.8236
+            ],
+            "sensors": [
+                {
+                    "name": "camera_L",
+                    "type": "camera",
+                    "requested_update_time": 0.050000000745058,
+                    "update_priority": 0,
+                    "pos": [
+                        0.1252,
+                        -0.119,
+                        1.202
+                    ],
+                    "up": [
+                        1.589e-07,
+                        -1.715e-08,
+                        1
+                    ],
+                    "dir": [
+                        -1.605e-07,
+                        -1,
+                        -2.828e-07
+                    ],
+                    "resolution": [
+                        1280,
+                        720
+                    ],
+                    "field_of_view_y": 70,
+                    "near_far_planes": [
+                        0.050000000745058,
+                        100
+                    ],
+                    "integer_depth": true,
+                    "is_dir_world_space": false,
+                    "is_force_inside_triangle": false,
+                    "is_snapping_desired": false,
+                    "is_static": false,
+                    "is_streaming": false,
+                    "is_visualised": true,
+                    "is_render_colours": true,
+                    "is_render_depth": true,
+                    "is_render_instance": false
+                },
+                {
+                    "name": "camera_R",
+                    "type": "camera",
+                    "requested_update_time": 0.050000000745058,
+                    "update_priority": 0,
+                    "pos": [
+                        -0.1148,
+                        -0.119,
+                        1.202
+                    ],
+                    "dir": [
+                        -5.55e-08,
+                        -1,
+                        7.318e-08
+                    ],
+                    "up": [
+                        3.655e-08,
+                        1.221e-08,
+                        1
+                    ],
+                    "resolution": [
+                        1280,
+                        720
+                    ],
+                    "field_of_view_y": 70,
+                    "near_far_planes": [
+                        0.050000000745058,
+                        100
+                    ],
+                    "integer_depth": true,
+                    "is_dir_world_space": false,
+                    "is_force_inside_triangle": false,
+                    "is_snapping_desired": false,
+                    "is_static": false,
+                    "is_streaming": false,
+                    "is_visualised": true,
+                    "is_render_colours": true,
+                    "is_render_depth": true,
+                    "is_render_instance": false
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,32 @@
+services:
+  ros2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ros2_beamng_bridge
+    network_mode: "host"
+    ipc: "host"
+    shm_size: '4gb'
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video
+    
+    volumes:
+      - ../..:/ADC_27:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev/dri:/dev/dri:rw
+    
+    stdin_open: true
+    tty: true
+    command: bash

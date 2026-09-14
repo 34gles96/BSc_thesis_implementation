@@ -2,6 +2,10 @@
 
 Ez a dokumentum a távoli munkaállomáshoz (`Shark-remote`) történő csatlakozás lépéseit, a javasolt beállításokat, a gyorsbillentyűket és a hibaelhárítást tartalmazza.
 
+> [!WARNING]
+> **Ez a környezet trappeli az egeret, amiből csak shortcuttal lehet kiszedni**
+> Gyors, BeamNG.tech futtatásához tökéletes, éles képe van, de egyszerű remote munkavégzéshez annyira nem kényelmes.
+
 ---
 
 ## 1. Kliens Telepítése

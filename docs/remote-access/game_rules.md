@@ -6,16 +6,21 @@ Ez a szabályzat a távoli munkaállomás (`*.danielserver.uk`, `rustdesk`) stab
 
 ## 1. Felhasználói Fiókok és Hozzáférés
 
-* **Kizárólag saját fiók:** Mindig a saját nevedre szóló felhasználói fiókkal jelentkezz be SSH-n Moonlighton és RustDesken keresztül egyaránt. Más fiókjába belépni vagy annak nevében folyamatokat futtatni tilos.
+* **Kizárólag saját fiók:** Mindig a saját nevedre szóló felhasználói fiókkal jelentkezz be SSH-n, Moonlighton és RustDesken keresztül egyaránt. Más fiókjába belépni vagy annak nevében folyamatokat futtatni tilos.
 * **Kijelentkezés vs. Munkamenet elhagyása:**
-  * Ha végeztél a munkával vagy a játékkal, mindig **jelentkezz ki** (Logout), hogy felszabadítsd a GPU-t, az X11 display-t és a memóriát a többiek számára.
+  * Ha végeztél a munkával vagy a játékkal, a munkamenet végén mindig **jelentkezz ki (Log Out)**! 
+  * **Szigorúan tilos a "Felhasználóváltás" (Switch User / Lock screen) használata:** Ha csak zárolod a képernyőt vagy felhasználót váltasz ahelyett, hogy kijelentkeznél, az X11 display lefoglalva marad, és a Moonlight nem fogja tudni visszahozni a LightDM Login Screent a többieknek!
   * A Moonlight stream bezárása (`Ctrl + Alt + Shift + Q`) **nem** jelentkeztet ki automatikusan; a háttérben futó nehéz folyamatokat (pl. szimuláció, renderelés) kézzel zárd be előtte.
 
 ---
 
-## 2. Emelt Szintű Jogosultságok (`root` / `sudo`)
+## 2. Emelt Szintű Jogosultságok (`root` / `sudo`) és Kényelmi Parancsok
 
 * **Nincs közvetlen root bejelentkezés:** A közvetlen root login tiltva van; minden adminisztratív feladatot `sudo` előtaggal, saját felhasználóból kell végezni.
+* **Szerver újraindítása (`reboot-mint`):** 
+  * Ha a szerver újraindítása szükséges, használd az erre beállított rendszerszintű **`reboot-mint`** parancsot.
+  * Ez a parancs gondoskodik a GRUB alapértelmezett Linux Mint rendszerének tiszta újraindításáról. Ha nem ezt a parancsot használod, akkor egy másik operációs rendszer fog elindulni, ami nem szimulációs célokra van kialakítva. Ha ez indul el, akkor keresd Danit.
+  * Újraindítás előtt mindig győződj meg róla (pl. `who`, `nvidia-smi`), hogy más nem futtat éppen kritikus folyamatot!
 * **Körültekintő szerkesztés:** 
   * Rendszerszintű konfigurációs fájlok módosítása előtt (különösen `/etc/`, `lightdm`, `fstab`, `network`) **mindig készíts biztonsági mentést** (pl. `sudo cp config.conf config.conf.bak`).
   * Ne futtass ismeretlen bash scripteket ellenőrzés nélkül emelt joggal (`curl ... | sudo bash` szigorúan tilos).
@@ -51,10 +56,15 @@ Ez a szabályzat a távoli munkaállomás (`*.danielserver.uk`, `rustdesk`) stab
   * Új streamelhető alkalmazást körültekintően adj hozzá az `apps.json`-hoz, ügyelve a leállító parancsokra (`undo`).
 * **Vágólap és biztonság:** A vágólap megosztása aktív; érzékeny jelszavakat, privát kulcsokat körültekintően másolj, és töröld a vágólap előzményeit szükség esetén.
 
+---
+
 ## 6. Gyakori Hibák és Megoldásuk
- - ha hiba merül fel, szólj Molnár Daninak discordon, messengeren, emailen, telefonon, vagy személyesen
+
+* Ha hiba merül fel, szólj Molnár Daninak Discordon, Messengeren, e-mailen, telefonon vagy személyesen.
+
+---
 
 ## 7. Jelszavak
-Mivel elolvastad a szabályokat, kiérdemelted a jelszavadat. Ezeket ebben a táblázatban találod meg:
-https://docs.google.com/spreadsheets/d/1ON_kKN5WcVB_l9Y5AQHYR0e5wDDAHElJEuSag1Sg7FA/edit?gid=0#gid=0
 
+Mivel elolvastad a szabályokat, kiérdemelted a jelszavadat. Ezeket ebben a táblázatban találod meg:  
+https://docs.google.com/spreadsheets/d/1ON_kKN5WcVB_l9Y5AQHYR0e5wDDAHElJEuSag1Sg7FA/edit?gid=0#gid=0
