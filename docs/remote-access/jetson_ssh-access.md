@@ -14,7 +14,7 @@ Operációs rendszertől függetlenül, külön kliensprogram telepítése nélk
 3. Írd be az e-mailben kapott **egyszer használatos PIN kódot**.
 4. A sikeres hitelesítés után megjelenő webes konzolban lépj be a felhasználóddal:
    * **Username:** `shark`
-   * **Password:** *(a megadott jelszó)*
+   * **Password:** `SharkTeam`
 
 ---
 
