@@ -23,21 +23,34 @@ RUN groupadd --gid $USER_GID $USERNAME \
 RUN apt-get update \
     && apt-get install -y sudo \
     && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
-    && chmod 0440 /etc/sudoers.d/$USERNAME
-RUN apt-get update && apt-get upgrade -y
+    && chmod 0440 /etc/sudoers.d/$USERNAME \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 
-# camera driver things
-RUN apt-get install -y aravis-tools
-RUN apt-get install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
-RUN apt-get install -y ros-humble-camera-aravis2
-RUN apt-get install -y ros-humble-rosbag2-storage-mcap
-RUN apt-get install -y ros-humble-stereo-image-proc
-RUN apt-get install -y ros-humble-camera-calibration
-RUN apt-get install -y ros-humble-image-proc
-# RTAB-Map (stereo SLAM, visual odometry).
-# Do not use ros-humble-rtabmap-ros: it depends on rtabmap_demos →
-# turtlebot3_gazebo, which is often missing (arm64) and breaks the meta-package.
-# Install only the stack we use in beamng_launch.py.
+# Camera driver things, GStreamer & ROS vision tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer-plugins-bad1.0-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    gstreamer1.0-tools \
+    gstreamer1.0-x \
+    gstreamer1.0-alsa \
+    gstreamer1.0-gl \
+    gstreamer1.0-gtk3 \
+    gstreamer1.0-qt5 \
+    gstreamer1.0-pulseaudio \
+    ros-humble-rosbag2-storage-mcap \
+    ros-humble-stereo-image-proc \
+    ros-humble-camera-calibration \
+    ros-humble-image-proc \
+    && rm -rf /var/lib/apt/lists/*
+
+# RTAB-Map (stereo SLAM, visual odometry)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rtabmap \
     ros-humble-rtabmap-msgs \
@@ -49,17 +62,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rviz2 \
     && rm -rf /var/lib/apt/lists/*
 
-# For convinience (rqt, pip, nano)
-RUN apt-get update && apt-get install -y \
+# Convenience tools (rqt, pip, nano)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     python3-colcon-common-extensions \
     python3-pip \
     nano \
     ros-humble-rqt \
     ros-humble-rqt-common-plugins \
     ros-humble-rqt-graph \
-    ros-humble-rqt-image-view && \
-    # To avoid conflicts with ROS2 numpy version
-    pip3 uninstall -y numpy 
+    ros-humble-rqt-image-view \
+    && rm -rf /var/lib/apt/lists/* 
 
 USER ${USERNAME}
 # Configure ROS2 to be usable every time we open a terminal
@@ -73,29 +86,46 @@ WORKDIR /home/${USERNAME}/ADC_27
 FROM base AS beamng-ros2
 
 # beamngpy dependencies
-RUN sudo apt install -y \
+RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-msgpack \
-    python3-seaborn 
+    python3-seaborn \
+    && sudo rm -rf /var/lib/apt/lists/*
 
-# install beamng-ros2-integration
-RUN git clone https://github.com/BeamNG/beamng-ros2-integration.git /home/$USERNAME/beamng-ros2-ws/src/beamng-ros2-integration
+# BeamNG Ros2 Bridge install
+FROM base AS beamng-ros2
 
-# ÚJ:
+# beamngpy dependencies
+RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+    python3-colcon-common-extensions \
+    python3-msgpack \
+    python3-seaborn \
+    git \
+    && sudo rm -rf /var/lib/apt/lists/*
+
+# Clone beamng-ros2-integration AND the missing radar_msgs source
+RUN git clone https://github.com/BeamNG/beamng-ros2-integration.git /home/$USERNAME/beamng-ros2-ws/src/beamng-ros2-integration && \
+    git clone https://github.com/ros-perception/radar_msgs.git -b ros2 /home/$USERNAME/beamng-ros2-ws/src/radar_msgs
+
 RUN if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then \
     sudo rosdep init; \
     fi
 
 WORKDIR /home/$USERNAME/beamng-ros2-ws
-RUN . /opt/ros/humble/setup.sh && \
+RUN sudo apt-get update && \
+    . /opt/ros/humble/setup.sh && \
     rosdep update && \
-    rosdep install --from-paths src -r -y && \
-    colcon build
+    rosdep install --from-paths src --ignore-src -r -y && \
+    colcon build && \
+    sudo rm -rf /var/lib/apt/lists/*
 
-RUN . /home/$USERNAME/beamng-ros2-ws/install/setup.sh
 RUN echo "source /home/$USERNAME/beamng-ros2-ws/install/setup.bash" >> /home/$USERNAME/.bashrc
 
 # Install beamngpy 1.36 for BeamNG.tech 0.39 compatibility
-RUN python3 -m pip install beamngpy==1.36 python-rapidjson --no-deps
+# Régi sor:
+# RUN python3 -m pip install beamngpy==1.36 python-rapidjson --no-deps
+
+# ÚJ sor:
+RUN python3 -m pip install "numpy<2" beamngpy==1.36 python-rapidjson jinja2 Pillow scipy
 
 WORKDIR /home/${USERNAME}/ADC_27
