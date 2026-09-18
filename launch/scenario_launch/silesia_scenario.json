@@ -110,7 +110,11 @@
                         0.65
                     ],
                     "ref_lat": 50.5312,
-                    "ref_lon": 18.0872
+                    "ref_lon": 18.0872,
+                    "hAcc_mean": 0.02,
+                    "vAcc_mean": 0.05,
+                    "hAcc_std": 0.005,
+                    "vAcc_std": 0.010
                 },
                 {
                     "name": "gps_rover_hood",
@@ -121,7 +125,11 @@
                         0.65
                     ],
                     "ref_lat": 50.5312,
-                    "ref_lon": 18.0872
+                    "ref_lon": 18.0872,
+                    "hAcc_mean": 0.02,
+                    "vAcc_mean": 0.05,
+                    "hAcc_std": 0.005,
+                    "vAcc_std": 0.010
                 }
             ]
         }
