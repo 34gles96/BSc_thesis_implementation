@@ -100,6 +100,28 @@
                     "is_render_colours": true,
                     "is_render_depth": true,
                     "is_render_instance": false
+                },
+                {
+                    "name": "gps_base_hood",
+                    "type": "gps",
+                    "pos": [
+                        -0.2,
+                        0.7,
+                        0.65
+                    ],
+                    "ref_lat": 50.5312,
+                    "ref_lon": 18.0872
+                },
+                {
+                    "name": "gps_rover_hood",
+                    "type": "gps",
+                    "pos": [
+                        0.2,
+                        0.7,
+                        0.65
+                    ],
+                    "ref_lat": 50.5312,
+                    "ref_lon": 18.0872
                 }
             ]
         }

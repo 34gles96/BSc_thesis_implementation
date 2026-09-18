@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       network: host
-    container_name: ros2_beamng_bridge
+    container_name: ros2_beamng_bridge_pist
     network_mode: "host"
     ipc: "host"
     shm_size: '4gb'
