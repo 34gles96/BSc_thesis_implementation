@@ -24,7 +24,6 @@
                 {
                     "name": "camera_L",
                     "type": "camera",
-                    "requested_update_time": 0.050000000745058,
                     "update_priority": 0,
                     "pos": [
                         0.1252,
@@ -47,7 +46,7 @@
                     ],
                     "field_of_view_y": 70,
                     "near_far_planes": [
-                        0.050000000745058,
+                        0.05,
                         100
                     ],
                     "integer_depth": true,
@@ -55,7 +54,6 @@
                     "is_force_inside_triangle": false,
                     "is_snapping_desired": false,
                     "is_static": false,
-                    "is_streaming": false,
                     "is_visualised": true,
                     "is_render_colours": true,
                     "is_render_depth": true,
@@ -64,7 +62,6 @@
                 {
                     "name": "camera_R",
                     "type": "camera",
-                    "requested_update_time": 0.050000000745058,
                     "update_priority": 0,
                     "pos": [
                         -0.1148,
@@ -87,7 +84,7 @@
                     ],
                     "field_of_view_y": 70,
                     "near_far_planes": [
-                        0.050000000745058,
+                        0.05,
                         100
                     ],
                     "integer_depth": true,
@@ -95,41 +92,44 @@
                     "is_force_inside_triangle": false,
                     "is_snapping_desired": false,
                     "is_static": false,
-                    "is_streaming": false,
                     "is_visualised": true,
                     "is_render_colours": true,
                     "is_render_depth": true,
                     "is_render_instance": false
                 },
                 {
-                    "name": "gps_base_hood",
+                    "name": "gps_base_front",
                     "type": "gps",
                     "pos": [
-                        -0.2,
-                        0.7,
-                        0.65
+                        -0.4,
+                        -1.8,
+                        0.55
                     ],
                     "ref_lat": 50.5312,
                     "ref_lon": 18.0872,
                     "hAcc_mean": 0.02,
                     "vAcc_mean": 0.05,
                     "hAcc_std": 0.005,
-                    "vAcc_std": 0.010
+                    "vAcc_std": 0.010,
+                    "sAcc_mean": 0.05,
+                    "sAcc_std": 0.010
                 },
                 {
-                    "name": "gps_rover_hood",
+                    "name": "gps_rover_front",
                     "type": "gps",
                     "pos": [
-                        0.2,
-                        0.7,
-                        0.65
+                        0.4,
+                        -1.8,
+                        0.55
                     ],
                     "ref_lat": 50.5312,
                     "ref_lon": 18.0872,
                     "hAcc_mean": 0.02,
                     "vAcc_mean": 0.05,
                     "hAcc_std": 0.005,
-                    "vAcc_std": 0.010
+                    "vAcc_std": 0.010,
+                    "sAcc_mean": 0.05,
+                    "sAcc_std": 0.010
                 }
             ]
         }
