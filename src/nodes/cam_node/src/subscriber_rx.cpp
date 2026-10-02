@@ -23,16 +23,16 @@ public:
         : Node("camera_subscriber") // initialization list for parent class
     {
 
-        camera_params_ = loadCameraParams("/workspace/data/CameraConfig.yaml");
+        camera_params_ = loadCameraParams("/home/base/ADC_27/configData/cam_config/CameraConfig.yaml");
 
         cv::Size img_size(camera_params_.width, camera_params_.height);
         point_cloud_3D_ = cv::Mat(img_size, CV_32FC3, cv::Scalar(0.0f, 0.0f, 0.0f)); // initialization of pointcloud:size:u x v, one element memlayout : CV_32FC3
 
-        // subscripton for chanel of left img stream
-        sub_left_.subscribe(this, "/camera/imageLeft");
+        // Subscription for channel of left image stream
+        sub_left_.subscribe(this, "/vehicles/beamng_bridge/sensors/camera_L/colour");
 
-        // subscripton for chanel of right img stream
-        sub_right_.subscribe(this, "/camera/imageRight");
+        // Subscription for channel of right image stream
+        sub_right_.subscribe(this, "/vehicles/beamng_bridge/sensors/camera_R/colour");
 
         sync_ = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(
             SyncPolicy(10), sub_left_, sub_right_);

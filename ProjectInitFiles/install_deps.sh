@@ -33,6 +33,10 @@ echo "========================================"
 sudo apt install -y libyaml-cpp-dev
 
 
+echo "========================================"
+echo "Installing python 3rd party packages"
+pip install numpy scipy
+echo "========================================"
 
 
 echo "========================================"

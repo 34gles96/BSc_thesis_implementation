@@ -28,3 +28,89 @@
 └── struct.txt
 
 15 directories, 12 files
+.
+├── README.md
+├── beamng-ros2-integration_clean
+│   └── sensors.py
+├── configData
+│   └── cam_config
+│       └── CameraConfig.yaml
+├── docker
+│   └── ros2_beamng_bridge
+│       ├── Dockerfile
+│       └── docker-compose.yml
+├── docs
+│   ├── remote-access
+│   │   ├── game_rules.md
+│   │   ├── jetson_ssh-access.md
+│   │   ├── server_remote-rustdesk.md
+│   │   ├── server_remote-sunshine+moonlight.md
+│   │   └── server_ssh-access.md
+│   └── usage
+│       └── beginner_usage.md
+├── generate_cfgCam_from_Scenario.py
+├── install_deps.sh
+├── launch
+│   ├── config
+│   ├── docs
+│   └── scenario_launch
+│       ├── launch.py
+│       └── silesia_scenario.json
+├── src
+│   └── nodes
+│       ├── cam_node
+│       │   ├── CMakeLists.txt
+│       │   ├── build
+│       │   │   ├── COLCON_IGNORE
+│       │   │   └── cam_node
+│       │   ├── include
+│       │   │   ├── build
+│       │   │   ├── cam_node
+│       │   │   ├── install
+│       │   │   └── log
+│       │   ├── install
+│       │   │   ├── COLCON_IGNORE
+│       │   │   ├── _local_setup_util_ps1.py
+│       │   │   ├── _local_setup_util_sh.py
+│       │   │   ├── cam_node
+│       │   │   ├── local_setup.bash
+│       │   │   ├── local_setup.ps1
+│       │   │   ├── local_setup.sh
+│       │   │   ├── local_setup.zsh
+│       │   │   ├── setup.bash
+│       │   │   ├── setup.ps1
+│       │   │   ├── setup.sh
+│       │   │   └── setup.zsh
+│       │   ├── log
+│       │   │   ├── COLCON_IGNORE
+│       │   │   ├── build_2026-10-02_16-57-34
+│       │   │   ├── build_2026-10-02_16-59-43
+│       │   │   ├── build_2026-10-02_17-00-35
+│       │   │   ├── build_2026-10-02_17-03-00
+│       │   │   ├── build_2026-10-02_17-03-55
+│       │   │   ├── build_2026-10-02_17-04-57
+│       │   │   ├── latest -> latest_build
+│       │   │   └── latest_build -> build_2026-10-02_17-04-57
+│       │   ├── package.xml
+│       │   └── src
+│       │       ├── README.md
+│       │       ├── desiredTrajectory.cpp
+│       │       ├── fitLanePoly.cpp
+│       │       ├── pinholeBackProjection.cpp
+│       │       ├── readConfig.cpp
+│       │       └── subscriber_rx.cpp
+│       ├── line_node
+│       │   ├── config
+│       │   └── docs
+│       ├── main_node
+│       │   ├── config
+│       │   └── docs
+│       ├── nav_node
+│       │   ├── config
+│       │   └── docs
+│       └── stop_node
+│           ├── confg
+│           └── docs
+└── struct.txt
+
+46 directories, 37 files
