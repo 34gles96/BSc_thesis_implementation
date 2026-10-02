@@ -1,0 +1,30 @@
+.
+├── README.md
+├── docker
+│   └── ros2_beamng_bridge
+│       ├── Dockerfile
+│       └── docker-compose.yml
+├── docs
+│   ├── remote-access
+│   │   ├── game_rules.md
+│   │   ├── jetson_ssh-access.md
+│   │   ├── server_remote-rustdesk.md
+│   │   ├── server_remote-sunshine+moonlight.md
+│   │   └── server_ssh-access.md
+│   └── usage
+│       └── beginner_usage.md
+├── launch
+│   ├── config
+│   ├── docs
+│   └── scenario_launch
+│       ├── launch.py
+│       └── silesia_scenario.json
+├── src
+│   └── nodes
+│       ├── line_node
+│       ├── main_node
+│       ├── nav_node
+│       └── stop_node
+└── struct.txt
+
+15 directories, 12 files
