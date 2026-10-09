@@ -23,27 +23,47 @@ public:
         : Node("camera_subscriber") // initialization list for parent class
     {
 
-        camera_params_ = loadCameraParams("/home/base/ADC_27/configData/cam_config/CameraConfig.yaml");
+        camera_params_ = loadCameraParams(
+            "/home/base/ADC_27/configData/cam_config/CameraConfig.yaml");
 
         cv::Size img_size(camera_params_.width, camera_params_.height);
-        point_cloud_3D_ = cv::Mat(img_size, CV_32FC3, cv::Scalar(0.0f, 0.0f, 0.0f)); // initialization of pointcloud:size:u x v, one element memlayout : CV_32FC3
+
+        point_cloud_3D_ = cv::Mat(
+            img_size,
+            CV_32FC3,
+            cv::Scalar(0.0f, 0.0f, 0.0f)); // initialization of pointcloud:size:u x v, one element memlayout : CV_32FC3
+
+        // QoS configuration for camera image streams
+        auto qos = rclcpp::QoS(rclcpp::KeepLast(1));
 
         // Subscription for channel of left image stream
-        sub_left_.subscribe(this, "/vehicles/beamng_bridge/sensors/camera_L/colour");
+        sub_left_.subscribe(
+            this,
+            "/vehicles/beamng_bridge/sensors/camera_L/colour",
+            qos.get_rmw_qos_profile());
 
         // Subscription for channel of right image stream
-        sub_right_.subscribe(this, "/vehicles/beamng_bridge/sensors/camera_R/colour");
+        sub_right_.subscribe(
+            this,
+            "/vehicles/beamng_bridge/sensors/camera_R/colour",
+            qos.get_rmw_qos_profile());
 
-        sync_ = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(
-            SyncPolicy(10), sub_left_, sub_right_);
+        sync_ = std::make_shared<
+            message_filters::Synchronizer<SyncPolicy>>(
+            SyncPolicy(10),
+            sub_left_,
+            sub_right_);
 
         sync_->registerCallback(std::bind(
-            &CameraSubscriber::stereo_callback, this,
-            std::placeholders::_1, std::placeholders::_2));
+            &CameraSubscriber::stereo_callback,
+            this,
+            std::placeholders::_1,
+            std::placeholders::_2));
 
         int minDisparity = 0;
         int numDisparities = 16 * 10; // 160 disparities
         int blockSize = 15;           // INCREASED: A large block size (15x15) grabs more road texture
+
         stereo_ = cv::StereoSGBM::create(
             0,
             16 * 8,
@@ -104,11 +124,21 @@ private:
             cv::Mat mask;
             cv::inRange(hsv, lower_white, upper_white, mask); // pixels in range of (lower_white, upper_hwhite) -> white, else black. stored: mask
 
-            // defining region of interest (lower part of the streamed screen (ignoring tree s)).
-            cv::Rect roi_area(0, mask.rows / 2, mask.cols, mask.rows / 2);
-            cv::Mat mask_roi = mask(roi_area); // extracting the ROI part from mask
+            // defining region of interest (lower part of the streamed screen (ignoring ,trees and the vehicle hood)).
+            // defining region of interest:
 
-            // Extracting the (u, v ) pixel coordinates of the white line
+            int roi_top = static_cast<int>(mask.rows * 0.50); // taking boundery for camputred img stream : vertical boundary from up
+            int roi_bottom = static_cast<int>(mask.rows * 0.85);
+
+            cv::Rect roi_area(
+                0,
+                roi_top,
+                mask.cols,
+                roi_bottom - roi_top);
+
+            cv::Mat mask_roi = mask(roi_area); // applying boundary
+
+            // Extracting the (u,v) pixel coordinates of the white line
             std::vector<cv::Point> white_line_pts;
 
             // Scan the masked region
@@ -119,9 +149,12 @@ private:
                     // If the pixel is white (255)
                     if (mask_roi.at<uchar>(y, x) == 255)
                     {
-                        // Adjust Y back to the original image ( captured input camera stream)) coordinate frame
-                        int original_y = y + (image_bgr8.rows / 2);
-                        white_line_pts.push_back(cv::Point(x, original_y));
+                        // Transform ROI coordinates back into the original image coordinates
+                        int original_y = y + roi_area.y;
+                        int original_x = x + roi_area.x;
+
+                        white_line_pts.push_back(
+                            cv::Point(original_x, original_y));
                     }
                 }
             }
@@ -164,6 +197,10 @@ private:
             point_cloud_3D_ = pinHole2XYZ(image_bgr8, image_bgr8R_, stereo_, camera_params_, point_cloud_3D_);
 
             struct LanePolynomial whiteCurveParams = fitLanePolynomialOpenCV(white_line_imgL, point_cloud_3D_, laneW);
+
+            // ============== DEBUG ================= ======== ========
+            std::cout << "dinamically caluclated road witdh is: " << laneW << std::endl;
+            // ======== ======== ======== ======== ======== ========
 
             // ONLY draw if the polynomial was successfully solved
             if (whiteCurveParams.isValid)
@@ -211,7 +248,7 @@ private:
     cv::Mat white_line_imgR;
     cv::Mat white_line_imgL;
     CameraParams camera_params_;
-    double laneW = 3.5;
+    double laneW = 12;
     double Y_ground = 1.65; // hardcoded, but in real scenrio it depensd how i mount tha camera onto the vehicle
 };
 

@@ -90,16 +90,6 @@ RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-msgpack \
     python3-seaborn \
-    && sudo rm -rf /var/lib/apt/lists/*
-
-# BeamNG Ros2 Bridge install
-FROM base AS beamng-ros2
-
-# beamngpy dependencies
-RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-    python3-colcon-common-extensions \
-    python3-msgpack \
-    python3-seaborn \
     git \
     && sudo rm -rf /var/lib/apt/lists/*
 
@@ -122,10 +112,6 @@ RUN sudo apt-get update && \
 RUN echo "source /home/$USERNAME/beamng-ros2-ws/install/setup.bash" >> /home/$USERNAME/.bashrc
 
 # Install beamngpy 1.36 for BeamNG.tech 0.39 compatibility
-# Régi sor:
-# RUN python3 -m pip install beamngpy==1.36 python-rapidjson --no-deps
-
-# ÚJ sor:
 RUN python3 -m pip install "numpy<2" beamngpy==1.36 python-rapidjson jinja2 Pillow scipy
 
 WORKDIR /home/${USERNAME}/ADC_27

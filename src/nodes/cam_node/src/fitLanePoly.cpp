@@ -5,13 +5,39 @@ LanePolynomial fitLanePolynomialOpenCV(
     const cv::Mat &uvIMG, const cv::Mat &XYZ_IMG, double &road_width) // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
 {
 
-    //*******//*******//*******//*******//*******//*******//*******//*******//******* */
     // region of interest for detected left or right lane using for desired trsajectory
-    cv::Rect roi_area_left(0, uvIMG.rows / 2, uvIMG.cols / 2, uvIMG.rows / 2);
-    cv::Mat mask_roi_left = uvIMG(roi_area_left); // extracting the ROI part of left side of img
+    // Vertical ROI limits:
+    // ignore upper part of image and bottom part containing vehicle hood
+    int roi_top =
+        static_cast<int>(uvIMG.rows * 0.50);
 
-    cv::Rect roi_area_right(uvIMG.cols / 2, uvIMG.rows / 2, uvIMG.cols / 2, uvIMG.rows / 2);
-    cv::Mat mask_roi_right = uvIMG(roi_area_right); // extracting the ROI part of left side of img
+    int roi_bottom =
+        static_cast<int>(uvIMG.rows * 0.85);
+
+    int roi_height =
+        roi_bottom - roi_top;
+
+    // LEFT half of image
+    cv::Rect roi_area_left(
+        0,              // x
+        roi_top,        // y
+        uvIMG.cols / 2, // width
+        roi_height      // height
+    );
+
+    cv::Mat mask_roi_left =
+        uvIMG(roi_area_left);
+
+    // RIGHT half of image
+    cv::Rect roi_area_right(
+        uvIMG.cols / 2,              // x
+        roi_top,                     // y
+        uvIMG.cols - uvIMG.cols / 2, // width
+        roi_height                   // height
+    );
+
+    cv::Mat mask_roi_right =
+        uvIMG(roi_area_right);
 
     // Extracting the (u, v ) pixel coordinates of the white line
     std::vector<cv::Point> white_line_ptsL; // 2D stream of point of (u,v)
@@ -27,8 +53,9 @@ LanePolynomial fitLanePolynomialOpenCV(
             if (mask_roi_left.at<uchar>(y, x) == 255)
             {
                 // Adjust Y back to the original image ( captured input camera stream)) coordinate frame
-                int original_y = y + (uvIMG.rows / 2);
-                white_line_ptsL.push_back(cv::Point(x, original_y));
+                int original_y = y + roi_area_left.y;
+                int original_x = x + roi_area_left.x;
+                white_line_ptsL.push_back(cv::Point(original_x, original_y));
             }
         }
     }
@@ -43,8 +70,9 @@ LanePolynomial fitLanePolynomialOpenCV(
             if (mask_roi_right.at<uchar>(y, x) == 255)
             {
                 // Adjust Y back to the original image ( captured input camera stream)) coordinate frame
-                int original_y = y + (uvIMG.rows / 2);
-                white_line_ptsR.push_back(cv::Point(x, original_y));
+                int original_y = y + roi_area_right.y;
+                int original_x = x + roi_area_right.x;
+                white_line_ptsL.push_back(cv::Point(original_x, original_y));
             }
         }
     }
@@ -137,8 +165,10 @@ LanePolynomial fitLanePolynomialOpenCV(
     // =======================================================================
     // CALCULATE ROAD WIDHT
     // =======================================================================
-
-    if (abs(nb_whitePX_left > nb_whitePX_right) < 500) // extracting white pixels of 2 masks is nearly equal (no distorsion)
+    // extracting white pixels of 2 masks is nearly equal (no distorsion)
+    if (std::abs(
+            static_cast<long long>(nb_whitePX_left) -
+            static_cast<long long>(nb_whitePX_right)) < 500)
     {
         result.is_road_width_Valid = true;
         return result;

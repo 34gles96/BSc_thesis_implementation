@@ -5,7 +5,7 @@
 #include "desiredTrajectory.hpp"
 #include "fitLanePoly.hpp"
 
-#define PREDICTED_HORIZON (25.0f) // TODO: move into a global namespace like yaml file
+#define PREDICTED_HORIZON (10.0f) // TODO: move into a global namespace like yaml file
 
 // Draw trajectory and lane line on the original image frame
 void drawDesiredTrajectoryOnImage(

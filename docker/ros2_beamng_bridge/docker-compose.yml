@@ -4,10 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
       network: host
+
     container_name: ros2_beamng_bridge_pist
+
     network_mode: "host"
     ipc: "host"
-    shm_size: '4gb'
+    shm_size: "4gb"
+
+    working_dir: /workspace
 
     deploy:
       resources:
@@ -16,18 +20,24 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    
+
     environment:
       - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/tmp/.Xauthority
       - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video
-    
+
     volumes:
-      - ../..:/ADC_27:rw
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Project
+      - /home/pist/sharkProject_pist/ADC_27:/ADC_27:rw
+
+      # X11 authentication for SSH X11 forwarding
+      - /home/pist/.docker-x11/xauth:/tmp/.Xauthority:ro
+
+      # GPU / graphics
       - /dev/dri:/dev/dri:rw
-    
+
     stdin_open: true
     tty: true
     command: bash
