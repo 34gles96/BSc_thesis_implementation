@@ -15,6 +15,7 @@
 #include "fitLanePoly.hpp"
 #include "desiredTrajectory.hpp"
 #include "pinholeBackProjection.hpp"
+#include "config.hpp"
 
 class CameraSubscriber : public rclcpp::Node
 {
@@ -108,33 +109,66 @@ private:
             cv::split(hsv, hsv_channels);
 
             // 3. Apply CLAHE to the V (Value/Brightness) channel
-            cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
-            clahe->apply(hsv_channels[2], hsv_channels[2]);
+            // cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
+            // clahe->apply(hsv_channels[2], hsv_channels[2]);
 
             // 4. Merge channels back into an HSV image
-            cv::merge(hsv_channels, hsv);
+            // cv::merge(hsv_channels, hsv);
 
             // Define the HSV threshold range for WHITE
             // HSV ranges in OpenCV: H: 0-180, S: 0-255, V: 0-255
             // White = any color (H: 0-180), very low saturation (S: 0-50), very high brightness (V: 200-255)
-            cv::Scalar lower_white(0, 0, 230);
-            cv::Scalar upper_white(180, 50, 255);
+            // cv::Scalar lower_white(0, 0, 230);
+            // cv::Scalar upper_white(180, 50, 255);
+            // Require higher brightness and a slightly stricter filter
+            cv::Scalar lower_white(0, 0, 240);
+            cv::Scalar upper_white(180, 30, 255);
 
             //  Create a binary mask (white lines become pure white 255, everything else black 0)
             cv::Mat mask;
             cv::inRange(hsv, lower_white, upper_white, mask); // pixels in range of (lower_white, upper_hwhite) -> white, else black. stored: mask
 
+            // ========================================== DEBUG ===================================================
+
+            // =================================================== ==================================
             // defining region of interest (lower part of the streamed screen (ignoring ,trees and the vehicle hood)).
             // defining region of interest:
 
-            int roi_top = static_cast<int>(mask.rows * 0.50); // taking boundery for camputred img stream : vertical boundary from up
-            int roi_bottom = static_cast<int>(mask.rows * 0.85);
+            int roi_top = static_cast<int>(mask.rows * config::img_in_stream_vertical_cut_top); // taking boundery for camputred img stream : vertical boundary from up
+            int roi_bottom = static_cast<int>(mask.rows * config::img_in_stream_vertical_cut_bottom);
 
             cv::Rect roi_area(
                 0,
                 roi_top,
                 mask.cols,
                 roi_bottom - roi_top);
+
+            // ============== DEBUG =======================
+
+            // Create 3-channel debug image from binary mask
+            cv::Mat debug_image;
+            cv::cvtColor(mask, debug_image, cv::COLOR_GRAY2BGR);
+
+            // Draw GREEN ROI rectangle
+            cv::rectangle(
+                debug_image,
+                roi_area,
+                cv::Scalar(0, 255, 0),
+                3);
+
+            // Add green label
+            cv::putText(
+                debug_image,
+                "Region of Interest",
+                cv::Point(10, roi_top - 10),
+                cv::FONT_HERSHEY_SIMPLEX,
+                0.6,
+                cv::Scalar(0, 255, 0),
+                2);
+
+            cv::imshow("ROI Debug View", debug_image);
+            cv::waitKey(1);
+            // --------------------------------
 
             cv::Mat mask_roi = mask(roi_area); // applying boundary
 

@@ -45,8 +45,9 @@ if [ -f "$WORKSPACE_DIR/install/setup.bash" ]; then
 
     source "$WORKSPACE_DIR/install/setup.bash"
 
-    echo "=========================================="
-    echo " cam_node built and environment sourced! "
+    echo "============ soruce the environment:================"
+    echo "source /opt/ros/humble/setup.bash"
+    echo "source /home/base/ADC_27/src/install/setup.bash"
     echo "=========================================="
 
     echo ""

@@ -4,8 +4,7 @@
 
 #include "desiredTrajectory.hpp"
 #include "fitLanePoly.hpp"
-
-#define PREDICTED_HORIZON (10.0f) // TODO: move into a global namespace like yaml file
+#include "config.hpp"
 
 // Draw trajectory and lane line on the original image frame
 void drawDesiredTrajectoryOnImage(
@@ -21,7 +20,7 @@ void drawDesiredTrajectoryOnImage(
     std::vector<cv::Point> trajectory_2d_pixels;
 
     // Evaluate depths from 3 meters out to 25 meters ahead
-    for (double Z = 3.0; Z <= PREDICTED_HORIZON; Z += 0.5)
+    for (double Z = config::MIN_TRAJECTORY_Z; Z <= config::PREDICTED_HORIZON; Z += 0.5)
     {
 
         // 1. Calculate 3D position on the detected lane line

@@ -10,12 +10,15 @@ cv::Mat &pinHole2XYZ(const cv::Mat &image_bgr8L, const cv::Mat &image_bgr8R, cv:
     double cx_ = config.cx; // focal center of the left camare
     double cy_ = config.cy;
 
-    // DEBUG
+    // ========================= DEBUG ==================================================
+    /*
     std::cout << "fx: " << config.fx << std::endl;
     std::cout << "fy: " << config.fy << std::endl;
     std::cout << "cx: " << config.cx << std::endl;
     std::cout << "cy: " << config.cy << std::endl;
     std::cout << "baseline: " << config.baselink << std::endl;
+    */
+    // ====================================================================================================
 
     //  Reset pointcloud to 0 before populating new frame
     pointCloud = cv::Mat::zeros(image_bgr8L.size(), CV_32FC3);

@@ -1,5 +1,6 @@
 #include "fitLanePoly.hpp"
 #include <cmath>
+#include "config.hpp"
 
 LanePolynomial fitLanePolynomialOpenCV(
     const cv::Mat &uvIMG, const cv::Mat &XYZ_IMG, double &road_width) // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
@@ -9,10 +10,10 @@ LanePolynomial fitLanePolynomialOpenCV(
     // Vertical ROI limits:
     // ignore upper part of image and bottom part containing vehicle hood
     int roi_top =
-        static_cast<int>(uvIMG.rows * 0.50);
+        static_cast<int>(uvIMG.rows * config::img_in_stream_vertical_cut_top);
 
     int roi_bottom =
-        static_cast<int>(uvIMG.rows * 0.85);
+        static_cast<int>(uvIMG.rows * config::img_in_stream_vertical_cut_bottom);
 
     int roi_height =
         roi_bottom - roi_top;
@@ -72,12 +73,16 @@ LanePolynomial fitLanePolynomialOpenCV(
                 // Adjust Y back to the original image ( captured input camera stream)) coordinate frame
                 int original_y = y + roi_area_right.y;
                 int original_x = x + roi_area_right.x;
-                white_line_ptsL.push_back(cv::Point(original_x, original_y));
+                white_line_ptsR.push_back(cv::Point(original_x, original_y));
             }
         }
     }
     nb_whitePX_right = white_line_ptsR.size();
+    //*******//*******//*******//*******//*******//*******//*******//*******//******* */
+    bool use_left_lane =
+        white_line_ptsL.size() >= white_line_ptsR.size();
 
+    const std::vector<cv::Point> &selected_lane = use_left_lane ? white_line_ptsL : white_line_ptsR;
     //*******//*******//*******//*******//*******//*******//*******//*******//******* */
     int whitePixels = 0;
     int invalidDepth = 0;
@@ -87,40 +92,39 @@ LanePolynomial fitLanePolynomialOpenCV(
     std::vector<double> X_pts;
     std::vector<double> Z_pts;
 
-    for (int v = 0; v < uvIMG.rows; ++v)
+    for (const auto &pixel : selected_lane)
     {
-        for (int u = 0; u < uvIMG.cols; ++u)
+        cv::Vec3f pt3D = XYZ_IMG.at<cv::Vec3f>(pixel.y, pixel.x);
+        float X = pt3D[0];
+        float Z = pt3D[2];
+
+        if (
+            std::isfinite(X) &&
+            std::isfinite(Z) &&
+            Z > 0.1f &&
+            Z <= 30.0f)
         {
+            X_pts.push_back(
+                static_cast<double>(X));
 
-            if (255 == uvIMG.at<uchar>(v, u))
-            {
+            Z_pts.push_back(
+                static_cast<double>(Z));
 
-                ++whitePixels;
-                // Matrix access is (row, col) -> (v, u)
-                cv::Vec3f pt3D = XYZ_IMG.at<cv::Vec3f>(v, u);
-                float Z = pt3D[2];
-
-                // Check that disparity gave a valid depth (> 0)
-                if (Z > 0.1f && Z <= 30.0f)
-                {
-                    X_pts.push_back(static_cast<double>(pt3D[0]));
-                    Z_pts.push_back(static_cast<double>(Z));
-                    ++validPoints;
-                }
-                else
-                {
-                    ++invalidDepth;
-                }
-            }
+            ++validPoints;
+        }
+        else
+        {
+            ++invalidDepth;
         }
     }
 
-    // DEBUG
+    // ================= DEBUG ===================================================
     std::cout
         << "White pixels: " << whitePixels << '\n'
         << "Rejected by column: " << rejectedByColumn << '\n'
         << "Invalid depth: " << invalidDepth << '\n'
         << "Valid points: " << validPoints << '\n';
+    // ====================================================================
 
     LanePolynomial result;
     int N = X_pts.size();
