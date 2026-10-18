@@ -1,7 +1,20 @@
+
+// TODO: retunred value of EKF_func
+
+/*
+ROS2 msg: due to sensor data trasnitting introduced a trasnmission latency that follows noramlly distributions: timestemp not constant
+
+EKF predictions say:
+x_{k+1} = f(x_k, u_k) + w_k , where w_k ~ N(0,Q);     Q describes imperfect bicycle-model assumptions
+
+
+*/
 #include <chrono>
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <algorithm>
+#include <fstream>
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -14,7 +27,10 @@
 #include "message_filters/sync_policies/approximate_time.h"
 
 #include "ADAS.hpp"
-
+#include "EKF_interface.hpp"
+#include "loadADAScfg.hpp"
+#include "loadEKFconfig.hpp"
+#include "myLog.hpp"
 using std::placeholders::_1;
 using std::placeholders::_2;
 
@@ -32,47 +48,145 @@ public:
         : Node("adas_sensor_subscriber")
     {
 
+        // ==================== MATLAB EKF ====================
+
+        EKF_func_initialize();
+
+        imu_mounting_ = loadImuMounting(
+            "/ADC_27/configData/cam_config/ADAScfg.yaml");
+
+        vehicle_params_ =
+            loadVehicleParams("/ADC_27/configData/cam_config/ADAScfg.yaml");
+
+        // ==================== LOG FILE init ====================
+        myLOG::initializeGnssLog();
+        myLOG::initializeEkfLog();
+
         // =========================================================
         // initialize EKF state
         // =========================================================
-        ekf_state_.p.setZero();
+        ekf_config_ =
+            loadEkfConfig(
+                "/home/base/ADC_27/configData/cam_config/EKFcfg.yaml");
 
-        ekf_state_.q << 1.0,
-            0.0,
-            0.0,
-            0.0;
+        // Initial gyro bias mean
+        generated_ekf_state_.bg[0] = 0.0;
+        generated_ekf_state_.bg[1] = 0.0;
+        generated_ekf_state_.bg[2] = 0.0;
 
-        ekf_state_.bg.setZero();
+        // Initial gyro-bias covariance
+        for (int i = 0; i < 3; ++i)
+        {
+            const double sigma =
+                ekf_config_.gyro_bias_std[i];
 
-        ekf_state_.P =
-            Eigen::Matrix<double, 10, 10>::Identity();
+            const int state_index = 7 + i;
+
+            generated_ekf_state_.P[state_index + 10 * state_index] = sigma * sigma; // P_0[8:10, 8:10]
+            // The other parts of P_0 remain zero until your first valid dual-GNSS initialization inside MATLAB sets:
+            // state.P(1:3,1:3) = P_position;
+            // state.P(4:7,4:7) = P_quaternion;
+        }
+
+        std::fill_n(
+            generated_ekf_state_.Q,
+            100,
+            0.0);
+
+        /*
+        state index 0 -> E -> Q[0]
+        state index 1 -> N -> Q[11]
+        state index 2 -> U -> Q[22]
+        ...
+        */
+        const double sigmaE =
+            ekf_config_.bicycle_position_std[0];
+
+        const double sigmaN =
+            ekf_config_.bicycle_position_std[1];
+
+        generated_ekf_state_.Q[0] =
+            sigmaE * sigmaE;
+
+        generated_ekf_state_.Q[11] =
+            sigmaN * sigmaN;
+
+        // ====================================================
+
+        imu_group_ =
+            this->create_callback_group(
+                rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        steering_group_ =
+            this->create_callback_group(
+                rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        gnss_group_ =
+            this->create_callback_group(
+                rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        velocity_group_ =
+            this->create_callback_group(
+                rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        rclcpp::SubscriptionOptions imu_options;
+        imu_options.callback_group = imu_group_;
+
+        rclcpp::SubscriptionOptions steering_options;
+        steering_options.callback_group = steering_group_;
+
+        rclcpp::SubscriptionOptions gnss_options;
+        gnss_options.callback_group = gnss_group_;
+
+        rclcpp::SubscriptionOptions velocity_options;
+        velocity_options.callback_group = velocity_group_;
 
         // =========================================================
         // IMU SUBSCRIBER
         // =========================================================
 
         imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
-            "/imu/data",
+            "/vehicles/beamng_bridge/sensors/imu",
             rclcpp::SensorDataQoS(),
             std::bind(
                 &AdasSensorSubscriber::imuCallback,
                 this,
-                _1));
+                _1),
+            imu_options);
 
         // =========================================================
         // STEERING ANGLE SUBSCRIBER
         //
         // Here I use std_msgs/Float64.
-        // Replace this with your own custom vehicle message if needed.
+        //
         // =========================================================
 
-        steering_sub_ = this->create_subscription<std_msgs::msg::Float64>(
-            "/vehicle/steering_angle",
-            10,
-            std::bind(
-                &AdasSensorSubscriber::steeringCallback,
-                this,
-                _1));
+        steering_sub_ =
+            this->create_subscription<std_msgs::msg::Float64>(
+                "/vehicle/steering_angle",
+                10,
+                std::bind(
+                    &AdasSensorSubscriber::steeringCallback,
+                    this,
+                    _1),
+                steering_options);
+
+        // =========================================================
+        // wheel speed SUBSCRIBER
+        //
+        // Here I use std_msgs/Float64.
+        //
+        // =========================================================
+
+        velocity_sub_ =
+            this->create_subscription<std_msgs::msg::Float64>(
+                "/vehicle/wheelspeed",
+                10,
+                std::bind(
+                    &AdasSensorSubscriber::velocityCallback,
+                    this,
+                    _1),
+                velocity_options);
 
         // =========================================================
         // GNSS SUBSCRIBERS
@@ -85,12 +199,14 @@ public:
         gnss1_sub_.subscribe(
             this,
             "/gnss1/fix",
-            rmw_qos_profile_sensor_data);
+            rmw_qos_profile_sensor_data,
+            gnss_options);
 
         gnss2_sub_.subscribe(
             this,
             "/gnss2/fix",
-            rmw_qos_profile_sensor_data);
+            rmw_qos_profile_sensor_data,
+            gnss_options);
 
         // =========================================================
         // APPROXIMATE TIME SYNCHRONIZER
@@ -115,7 +231,18 @@ public:
             "ADAS sensor subscriber started.");
     }
 
+    ~AdasSensorSubscriber()
+    {
+        EKF_func_terminate();
+        myLOG::closeGnssLog();
+        myLOG::closeEkfLog();
+    }
+
 private:
+    // ==================== MATLAB EKF ====================
+    GeneratedImuMounting imu_mounting_{};
+    VehicleParams vehicle_params_{};
+    EkfConfig ekf_config_{};
     // =============================================================
     // IMU CALLBACK
     // =============================================================
@@ -123,27 +250,133 @@ private:
     void imuCallback(
         const sensor_msgs::msg::Imu::SharedPtr msg)
     {
-        // processing
 
-        imu.acceleration << msg->linear_acceleration.x,
-            msg->linear_acceleration.y,
-            msg->linear_acceleration.z;
-
-        imu.angular_velocity << msg->angular_velocity.x,
-            msg->angular_velocity.y,
-            msg->angular_velocity.z;
-
-        imu.stamp = rclcpp::Time(msg->header.stamp);
-
+        GeneratedGnssData generatedGnss{};
+        SteeringData steeringTmp;
+        VelocityData velocityTmp;
+        bool new_gnss = false;
+        // =========================================================
+        //  Local copies of shared sensor data
+        // =========================================================
         {
-            std::lock_guard<std::mutex> lock(data_mutex_);
+            std::lock_guard<std::mutex> lock(sensor_mutex_);
+
+            if (!steering_received_ || !velocity_received_) // needed at least one steering and wheel velocity recevied and workigng wit the latest steering always
+            {
+                return;
+            }
+            else
+            {
+                steeringTmp = SteeringData_;
+                velocityTmp = VelocityData_;
+            }
+
+            new_gnss = gnss_received_ && !DualGnssData_.isUsed;
+            if (new_gnss)
+            {
+                /*
+                lla[0] = latitude
+                lla[1] = longitude
+                lla[2] = altitude
+                */
+
+                generatedGnss.lla1[0] = DualGnssData_.lla1.x();
+                generatedGnss.lla1[1] = DualGnssData_.lla1.y();
+                generatedGnss.lla1[2] = DualGnssData_.lla1.z();
+
+                generatedGnss.lla2[0] = DualGnssData_.lla2.x();
+                generatedGnss.lla2[1] = DualGnssData_.lla2.y();
+                generatedGnss.lla2[2] = DualGnssData_.lla2.z();
+
+                generatedGnss.hAcc1 = DualGnssData_.hAcc1;
+                generatedGnss.vAcc1 = DualGnssData_.vAcc1;
+
+                generatedGnss.hAcc2 = DualGnssData_.hAcc2;
+                generatedGnss.vAcc2 = DualGnssData_.vAcc2;
+
+                generatedGnss.timestamp = DualGnssData_.timestamp_ms;
+
+                // for safety reasion: frame transformation happens insde EKF
+                const double nan =
+                    std::numeric_limits<double>::quiet_NaN();
+
+                for (int i = 0; i < 3; ++i)
+                {
+                    generatedGnss.position1_enu[i] = nan;
+                    generatedGnss.position2_enu[i] = nan;
+                    generatedGnss.position_enu[i] = nan;
+                    generatedGnss.baseline_enu[i] = nan;
+                    generatedGnss.baseline_body[i] = nan;
+                }
+
+                generatedGnss.valid = true;
+                DualGnssData_.isUsed = true;
+            }
         }
 
         // =========================================================
-        // EKF PREDICTION
+        //  Prepare IMU data
         // =========================================================
-        // TODO
-        // =========================================================
+        // =========== MATLAB =================
+        GeneratedImuData generatedImu{};
+
+        generatedImu.valid = true;
+
+        generatedImu.timestamp =
+            static_cast<double>(
+                rclcpp::Time(msg->header.stamp).nanoseconds()) /
+            1e6;
+
+        generatedImu.gyro[0] = msg->angular_velocity.x;
+        generatedImu.gyro[1] = msg->angular_velocity.y;
+        generatedImu.gyro[2] = msg->angular_velocity.z;
+
+        generatedImu.mounting = imu_mounting_;
+
+        /* Check whether ROS actually supplied gyro covariance */
+        if (msg->angular_velocity_covariance[0] < 0.0)
+        {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "IMU angular velocity covariance is unavailable.");
+
+            return;
+        }
+
+        /* ROS matrix -> MATLAB generated matrix */
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int col = 0; col < 3; ++col)
+            {
+                generatedImu.gyro_covariance[row + 3 * col] =
+                    msg->angular_velocity_covariance[row * 3 + col];
+            }
+        }
+
+        // =====================================
+
+        //  ======================= invoking EKF ==================================
+        GeneratedVehicleData generatedVehicle{};
+
+        generatedVehicle.velocity =
+            velocityTmp.velocity;
+
+        generatedVehicle.steering_angle =
+            steeringTmp.angle;
+
+        generatedVehicle.wheelbase =
+            vehicle_params_.wheelbase;
+
+        EKF_func(
+            &generatedImu,
+            &generatedGnss,
+            &generatedVehicle,
+            &generated_ekf_state_);
+
+        myLOG::logEkfState(
+            generatedImu.timestamp,
+            generated_ekf_state_);
+        //  =========================================================
 
         /*
         RCLCPP_DEBUG(
@@ -161,10 +394,23 @@ private:
     void steeringCallback(
         const std_msgs::msg::Float64::SharedPtr msg)
     {
-        std::lock_guard<std::mutex> lock(data_mutex_);
+        std::lock_guard<std::mutex> lock(sensor_mutex_);
 
-        latest_steering_angle_ = msg->data;
+        SteeringData_.angle = msg->data;
         steering_received_ = true;
+    }
+
+    // =============================================================
+    // WHEEL VELOCITY CALLBACK
+    // =============================================================
+    void velocityCallback(
+        const std_msgs::msg::Float64::SharedPtr msg)
+    {
+        std::lock_guard<std::mutex> lock(sensor_mutex_);
+
+        VelocityData_.velocity = msg->data;
+
+        velocity_received_ = true;
     }
 
     // =============================================================
@@ -175,21 +421,67 @@ private:
         const GnssMsg::ConstSharedPtr &gnss1,
         const GnssMsg::ConstSharedPtr &gnss2)
     {
-        // GNSS receiver 1-2
-        DualGnssData_.isUsed = false;
 
-        // TODO : sensor proccesing intro struct aligned with matlab coder lib
+        // log file DEBUG
+        myLOG::logGnssLla(
+            gnss1,
+            gnss2);
 
-        RCLCPP_INFO(
-            this->get_logger(),
-            "Synchronized GNSS pair received");
+        DualGnssData gnssTmp{};
+
+        const double t1_ms =
+            static_cast<double>(
+                rclcpp::Time(gnss1->header.stamp).nanoseconds()) /
+            1e6;
+
+        const double t2_ms =
+            static_cast<double>(
+                rclcpp::Time(gnss2->header.stamp).nanoseconds()) /
+            1e6;
+
+        gnssTmp.timestamp_ms = 0.5 * (t1_ms + t2_ms);
+
+        gnssTmp.lla1 << gnss1->latitude,
+            gnss1->longitude,
+            gnss1->altitude;
+
+        gnssTmp.lla2 << gnss2->latitude,
+            gnss2->longitude,
+            gnss2->altitude;
+
+        //  seting these according to your GNSS accuracy model (normally ditributed noise added in python ros-beaNG intergration but cov matrexes r tranmitetted bcxs or ROS architecture..)
+        gnssTmp.hAcc1 =
+            std::sqrt(gnss1->position_covariance[0]);
+
+        gnssTmp.vAcc1 =
+            std::sqrt(gnss1->position_covariance[8]);
+
+        gnssTmp.hAcc2 =
+            std::sqrt(gnss2->position_covariance[0]);
+
+        gnssTmp.vAcc2 =
+            std::sqrt(gnss2->position_covariance[8]);
+
+        {
+            std::lock_guard<std::mutex> lock(sensor_mutex_);
+
+            DualGnssData_ = gnssTmp; // shared resource is DualGnssData with imu callback (avoiding expensive isntruvtions in lock)
+            DualGnssData_.isUsed = false;
+
+            gnss_received_ = true; // first traansitted gnss is avaible to init ENU frame in EKF func
+        }
     }
 
-private:
     EkfState ekf_state_;
+    GeneratedEkfState generated_ekf_state_{};
     DualGnssData DualGnssData_;
-    ImuData imu;
     SteeringData SteeringData_;
+
+    // thread groups : enabling to parall executions for callback, shared mem is protected by using std::mutex
+    rclcpp::CallbackGroup::SharedPtr imu_group_;
+    rclcpp::CallbackGroup::SharedPtr steering_group_;
+    rclcpp::CallbackGroup::SharedPtr gnss_group_;
+    rclcpp::CallbackGroup::SharedPtr velocity_group_;
     // =============================================================
     // NORMAL ROS SUBSCRIBERS
     // =============================================================
@@ -199,6 +491,9 @@ private:
 
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr
         steering_sub_;
+
+    rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr
+        velocity_sub_;
 
     // =============================================================
     // MESSAGE FILTER GNSS SUBSCRIBERS
@@ -218,11 +513,15 @@ private:
     // LATEST VEHICLE DATA
     // =============================================================
 
-    std::mutex data_mutex_;
-
-    double latest_steering_angle_{0.0};
-
+    std::mutex sensor_mutex_;
     bool steering_received_{false};
+    bool gnss_received_{false};
+    VelocityData VelocityData_;
+    bool velocity_received_{false};
+
+    // =============================================================
+    // LOGGING MEMBERS (DEBUG)
+    // =============================================================
 };
 
 // ================================================================
@@ -248,4 +547,3 @@ int main(int argc, char **argv)
 
     return 0;
 }
-// TODO sensor std:_mutex using!!

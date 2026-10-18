@@ -130,6 +130,28 @@
                     "vAcc_std": 0.010,
                     "sAcc_mean": 0.05,
                     "sAcc_std": 0.010
+                },
+                {
+                    "name": "mesh",
+                    "type": "mesh"
+                },
+                {
+                     "name": "electrics",
+                     "type": "electrics"
+                },
+                {
+                    "name": "imu",
+                    "type": "imu",
+                    "pos": [0.0, 0.0, 0.5],
+                    "dir": [0.0, -1.0, 0.0],
+                    "up":  [1.0,  0.0, 0.0],
+                    "physics_update_time": 0.01,
+                    "gfx_update_time": 0.01,
+                    "smoother_strength": 1.0,
+                    "is_using_gravity": true,
+                    "is_visualised": true,
+                    "gyro_noise_std": 0.005,
+                    "acc_noise_std": 0.05
                 }
             ]
         }

@@ -1,0 +1,6 @@
+ekf:
+  initial:
+    gyro_bias_std: [0.01, 0.01, 0.01]
+
+  process_noise:
+    bicycle_position_std: [0.01, 0.01]

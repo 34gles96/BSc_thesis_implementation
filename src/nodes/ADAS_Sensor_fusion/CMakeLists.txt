@@ -16,12 +16,33 @@ find_package(std_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(Eigen3 REQUIRED)
 
+
+
+set(EKF_DIR
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/EKFlib_v4/EKF_func
+)
+
+add_library(vehicle_ekf STATIC
+  ${EKF_DIR}/EKF_func.cpp
+  ${EKF_DIR}/EKF_func_initialize.cpp
+  ${EKF_DIR}/EKF_func_terminate.cpp
+  ${EKF_DIR}/EKF_func_data.cpp
+  ${EKF_DIR}/mrdivide_helper.cpp
+  ${EKF_DIR}/rt_nonfinite.cpp
+  ${EKF_DIR}/rtGetInf.cpp
+  ${EKF_DIR}/rtGetNaN.cpp
+)
+
+target_include_directories(vehicle_ekf PUBLIC
+  ${EKF_DIR}
+)
 # ==========================================
 # EXECUTABLE
 # ==========================================
 
 add_executable(adas_subscriber
   src/ADASSubcriber.cpp
+  src/myLog.cpp
 )
 
 # ==========================================
@@ -50,6 +71,8 @@ ament_target_dependencies(adas_subscriber
 
 target_link_libraries(adas_subscriber
   Eigen3::Eigen
+  yaml-cpp
+  vehicle_ekf
 )
 
 # ==========================================
@@ -76,7 +99,7 @@ install(
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
-
+  find_package(yaml-cpp REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
 

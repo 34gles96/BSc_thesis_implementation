@@ -1,0 +1,7 @@
+imu:
+  mounting:
+    x_sensor_body: [1.0, 0.0, 0.0]
+    y_sensor_body: [0.0, 1.0, 0.0]
+    z_sensor_body: [0.0, 0.0, 1.0]
+vehicle:
+  wheelbase: 1.23 #todo replacing from scenario
