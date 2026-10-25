@@ -1,5 +1,6 @@
 
 // TODO: retunred value of EKF_func
+// TODO : std::ofstream object needs to write msg->acc values into log file
 
 /*
 ROS2 msg: due to sensor data trasnitting introduced a trasnmission latency that follows noramlly distributions: timestemp not constant
@@ -21,10 +22,13 @@ x_{k+1} = f(x_k, u_k) + w_k , where w_k ~ N(0,Q);     Q describes imperfect bicy
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "std_msgs/msg/float64.hpp"
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include "message_filters/subscriber.h"
 #include "message_filters/synchronizer.h"
 #include "message_filters/sync_policies/approximate_time.h"
+#include <nav_msgs/msg/odometry.hpp>
 
 #include "ADAS.hpp"
 #include "EKF_interface.hpp"
@@ -47,6 +51,17 @@ public:
     AdasSensorSubscriber()
         : Node("adas_sensor_subscriber")
     {
+        // ====================  PUBLISHER  ====================
+        // initialization of publisher for tranmtteing estimated pose ofr subscribers: camNode(trajectory),
+        ekf_pose_pub_ =
+            this->create_publisher<geometry_msgs::msg::PoseStamped>(
+                "/adas/ekf/pose", rclcpp::SensorDataQoS());
+
+        // initialization of publisher for tranmtteing estimated pose ofr subscribers : MPC
+        ekf_odom_pub_ =
+            this->create_publisher<nav_msgs::msg::Odometry>(
+                "/adas/ekf/odometry",
+                rclcpp::SensorDataQoS());
 
         // ==================== MATLAB EKF ====================
 
@@ -61,6 +76,7 @@ public:
         // ==================== LOG FILE init ====================
         myLOG::initializeGnssLog();
         myLOG::initializeEkfLog();
+        ekfReport::initializeReport();
 
         // =========================================================
         // initialize EKF state
@@ -146,7 +162,7 @@ public:
         // =========================================================
 
         imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
-            "/vehicles/beamng_bridge/sensors/imu",
+            "/vehicles/beamng_bridge/sensors/imu_fast",
             rclcpp::SensorDataQoS(),
             std::bind(
                 &AdasSensorSubscriber::imuCallback,
@@ -196,15 +212,17 @@ public:
         // the same measurement epoch.
         // =========================================================
 
+        // GNSS 1 = P1 = RIGHT antenna
         gnss1_sub_.subscribe(
             this,
-            "/gnss1/fix",
+            "/vehicles/beamng_bridge/sensors/gps_base_front",
             rmw_qos_profile_sensor_data,
             gnss_options);
 
+        // GNSS 2 = P2 = LEFT antenna
         gnss2_sub_.subscribe(
             this,
-            "/gnss2/fix",
+            "/vehicles/beamng_bridge/sensors/gps_rover_front",
             rmw_qos_profile_sensor_data,
             gnss_options);
 
@@ -234,8 +252,11 @@ public:
     ~AdasSensorSubscriber()
     {
         EKF_func_terminate();
+
         myLOG::closeGnssLog();
         myLOG::closeEkfLog();
+
+        ekfReport::closeReport(); // stop ros2 bag via sript
     }
 
 private:
@@ -302,11 +323,13 @@ private:
 
                 for (int i = 0; i < 3; ++i)
                 {
-                    generatedGnss.position1_enu[i] = nan;
+                    generatedGnss.position1_enu[i] = nan; // it is computed in EKF, so it s a placholder in cpp app
                     generatedGnss.position2_enu[i] = nan;
                     generatedGnss.position_enu[i] = nan;
                     generatedGnss.baseline_enu[i] = nan;
-                    generatedGnss.baseline_body[i] = nan;
+                    generatedGnss.baseline_body[0] = 0.0; // constructed from scnario.json , and trasnfromed into ros2 body frame convention
+                    generatedGnss.baseline_body[1] = 0.8;
+                    generatedGnss.baseline_body[2] = 0.0;
                 }
 
                 generatedGnss.valid = true;
@@ -320,36 +343,94 @@ private:
         // =========== MATLAB =================
         GeneratedImuData generatedImu{};
 
+        // ============================================================
+        // IMU mounting (for transformaing sensor frame into boudy frame)
+        // ============================================================
+        generatedImu.mounting = imu_mounting_;
+        // ============================================================
+        // IMU VALIDITY + TIMESTAMP
+        // ============================================================
+
         generatedImu.valid = true;
 
         generatedImu.timestamp =
             static_cast<double>(
                 rclcpp::Time(msg->header.stamp).nanoseconds()) /
-            1e6;
+            1e6; // milliseconds
 
-        generatedImu.gyro[0] = msg->angular_velocity.x;
-        generatedImu.gyro[1] = msg->angular_velocity.y;
-        generatedImu.gyro[2] = msg->angular_velocity.z;
+        // ============================================================
+        // GYROSCOPE VECTOR
+        //
+        // ROS measurement is in IMU SENSOR frame.
+        // MATLAB EKF_func performs SENSOR -> BODY transformation.
+        // ============================================================
 
-        generatedImu.mounting = imu_mounting_;
+        generatedImu.gyro[0] =
+            msg->angular_velocity.x;
 
-        /* Check whether ROS actually supplied gyro covariance */
-        if (msg->angular_velocity_covariance[0] < 0.0)
-        {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "IMU angular velocity covariance is unavailable.");
+        generatedImu.gyro[1] =
+            msg->angular_velocity.y;
 
-            return;
-        }
+        generatedImu.gyro[2] =
+            msg->angular_velocity.z;
 
-        /* ROS matrix -> MATLAB generated matrix */
+        // ============================================================
+        // GYROSCOPE COVARIANCE
+        //
+        // ROS:
+        //      row-major indexing
+        //      index = row*3 + col
+        //
+        // MATLAB Coder:
+        //      column-major indexing
+        //      index = row + 3*col
+        // ============================================================
+
         for (int row = 0; row < 3; ++row)
         {
             for (int col = 0; col < 3; ++col)
             {
                 generatedImu.gyro_covariance[row + 3 * col] =
                     msg->angular_velocity_covariance[row * 3 + col];
+            }
+        }
+
+        // ============================================================
+        // ACCELEROMETER VECTOR
+        //
+        // ROS measurement is in IMU SENSOR frame.
+        // MATLAB EKF_func performs SENSOR -> BODY transformation.
+        // ============================================================
+
+        generatedImu.accel[0] =
+            msg->linear_acceleration.x;
+
+        generatedImu.accel[1] =
+            msg->linear_acceleration.y;
+
+        generatedImu.accel[2] =
+            msg->linear_acceleration.z;
+
+        // ============================================================
+        // ACCELEROMETER COVARIANCE
+        //
+        // ROS covariance belongs to the SENSOR-frame acceleration.
+        //
+        // Do NOT rotate it here.
+        // MATLAB EKF_func will perform:
+        //
+        // R_acc_body =
+        //     R_body_sensor *
+        //     R_acc_sensor *
+        //     R_body_sensor.'
+        // ============================================================
+
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int col = 0; col < 3; ++col)
+            {
+                generatedImu.accel_covariance[row + 3 * col] =
+                    msg->linear_acceleration_covariance[row * 3 + col];
             }
         }
 
@@ -367,24 +448,86 @@ private:
         generatedVehicle.wheelbase =
             vehicle_params_.wheelbase;
 
+        // report into log file
+        ekfReport::reportEKF_in(
+            generatedImu,
+            generatedGnss,
+            generatedVehicle);
+
         EKF_func(
             &generatedImu,
             &generatedGnss,
             &generatedVehicle,
             &generated_ekf_state_);
 
+        // loging estimated pos.
         myLOG::logEkfState(
             generatedImu.timestamp,
             generated_ekf_state_);
-        //  =========================================================
 
-        /*
-        RCLCPP_DEBUG(
-            this->get_logger(),
-            "IMU prediction: wz = %.3f rad/s, steering = %.3f rad",
-            wz,
-            steering_angle);
-            */
+        //  ================== TRANMITTING ESTIMATED POSE VIA PUBLISHER =======================================
+
+        geometry_msgs::msg::PoseStamped pose_msg;
+
+        // EKF state corresponds to this IMU update
+        pose_msg.header.stamp = msg->header.stamp;
+
+        // Coordinate frame: East-North-Up
+        pose_msg.header.frame_id = "enu";
+
+        // Estimated CoG position in ENU
+        pose_msg.pose.position.x =
+            generated_ekf_state_.PosENU_cog[0];
+
+        pose_msg.pose.position.y =
+            generated_ekf_state_.PosENU_cog[1];
+
+        pose_msg.pose.position.z =
+            generated_ekf_state_.PosENU_cog[2];
+
+        // MATLAB quaternion: [qw, qx, qy, qz]
+        // ROS quaternion:    [qx, qy, qz, qw]
+
+        pose_msg.pose.orientation.x =
+            generated_ekf_state_.q[1];
+
+        pose_msg.pose.orientation.y =
+            generated_ekf_state_.q[2];
+
+        pose_msg.pose.orientation.z =
+            generated_ekf_state_.q[3];
+
+        pose_msg.pose.orientation.w =
+            generated_ekf_state_.q[0];
+
+        // Publish pose to camera/MPC subscribers
+        // Publishing only after the EKF has successfully initialized its ENU reference and valid pose.
+        ekf_pose_pub_->publish(pose_msg);
+
+        // ==========================================================
+        // PUBLISH EKF POSE AND VEHICLE VELOCITY FOR MPC
+        // ==========================================================
+
+        nav_msgs::msg::Odometry odom_msg{};
+
+        // Same timestamp and ENU reference frame as the EKF pose
+        odom_msg.header = pose_msg.header;
+
+        // Velocity is expressed in the vehicle body frame
+        odom_msg.child_frame_id = "base_link";
+
+        // Copy EKF-estimated CoG position and orientation
+        odom_msg.pose.pose = pose_msg.pose;
+
+        // Longitudinal vehicle speed from wheel-speed measurement
+        // Assumption: positive body-X direction is forward
+        odom_msg.twist.twist.linear.x = velocityTmp.velocity;
+
+        // No lateral or vertical velocity estimates available here
+        // Do not populate these with invented measurements.
+
+        // Transmit to MPC node
+        ekf_odom_pub_->publish(odom_msg);
     }
 
     // =============================================================
@@ -520,8 +663,14 @@ private:
     bool velocity_received_{false};
 
     // =============================================================
-    // LOGGING MEMBERS (DEBUG)
+    // PUBLISHERS
     // =============================================================
+
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
+        ekf_pose_pub_; // for CAM node
+
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr
+        ekf_odom_pub_; // for MPC node
 };
 
 // ================================================================

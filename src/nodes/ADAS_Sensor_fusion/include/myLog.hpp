@@ -28,3 +28,29 @@ namespace myLOG
     void closeEkfLog();
 
 }
+
+namespace ekfReport
+{
+
+    /* CSV layout:
+    timestamp
+    valid
+    gyro
+    gyro covariance
+    acceleration
+    acceleration covariance
+    mounting
+    GNSS
+    vehicle
+    */
+
+    void initializeReport();
+
+    void reportEKF_in(
+        const GeneratedImuData &imu,
+        const GeneratedGnssData &gnss,
+        const GeneratedVehicleData &vehicle);
+
+    void closeReport();
+
+}

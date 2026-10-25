@@ -14,6 +14,35 @@ find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(message_filters REQUIRED)
 
+
+
+
+# ==========================================================
+# MATLAB CODER CAMERA TRANSFORMATION LIBRARY
+# ==========================================================
+
+set(CAM_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/cam_node/CamLib_v2/camera_transform"
+)
+
+# Collect generated MATLAB Coder C++ source files
+file(GLOB CAM_SOURCES CONFIGURE_DEPENDS
+    "${CAM_DIR}/*.cpp"
+)
+
+# Build generated sources into a static library
+add_library(camera_transform STATIC
+    ${CAM_SOURCES}
+)
+
+# Directory containing generated header files
+target_include_directories(camera_transform PUBLIC
+    "${CAM_DIR}"
+)
+
+
+
+
 # ==========================================
 # MATLAB CODER LIBRARY PATHS
 # ==========================================
@@ -34,12 +63,15 @@ add_executable(subscriber_rx
   src/fitLanePoly.cpp
   src/pinholeBackProjection.cpp
   src/readConfig.cpp
+  src/initializeCameraMounting.cpp
 )
 
 target_include_directories(subscriber_rx PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${OpenCV_INCLUDE_DIRS}
+   "${CMAKE_CURRENT_SOURCE_DIR}/include/cam_node"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 ament_target_dependencies(subscriber_rx
@@ -54,6 +86,7 @@ target_link_libraries(subscriber_rx
   ${OpenCV_LIBS}
   yaml-cpp
   ${YAML_CPP_LIBRARIES}
+  camera_transform
 )
 
 # Install headers

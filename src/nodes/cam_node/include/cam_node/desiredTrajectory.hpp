@@ -5,9 +5,24 @@
 #include <cmath>
 #include "readConfig.hpp"
 #include "fitLanePoly.hpp"
+#include <limits>
+
+// Important: These XYZ coordinates are the calculated desired trajectory in the camera frame, not the measured stereo depth at those pixels.
+
+struct DesiredTrajectory
+{
+    // Ordered desired trajectory pixels
+    std::vector<cv::Point> uv_pixels;
+
+    // Corresponding XYZ points in camera frame
+    std::vector<cv::Vec3f> xyz_points;
+
+    // Mapping: xyz_map(v,u) = (X,Y,Z)
+    cv::Mat_<cv::Vec3f> xyz_map;
+};
 
 // Draw trajectory and lane line on the original image frame
-void drawDesiredTrajectoryOnImage(
+DesiredTrajectory drawDesiredTrajectoryOnImage(
 
     cv::Mat &original_bgr_frame,
     double a2, double a1, double a0, // Polynomial coeffs: X(Z) = a2*Z^2 + a1*Z + a0

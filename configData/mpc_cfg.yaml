@@ -1,0 +1,34 @@
+
+mpc:
+  # Prediction horizon (number of future steps)
+  Np: 25
+
+  # MPC sampling period [s] (30 Hz)
+  Ts: 0.0333333333
+
+  # Vehicle wheelbase [m]
+  L: 2.85
+
+  # State tracking weights: [E, N, yaw, velocity]
+  Q:
+    - [10.0, 0.0, 0.0, 0.0]
+    - [0.0, 10.0, 0.0, 0.0]
+    - [0.0, 0.0, 2.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+
+  # Control effort weights: [steering, acceleration]
+  R:
+    - [0.1, 0.0]
+    - [0.0, 0.1]
+
+  # Control change weights: [steering, acceleration]
+  S:
+    - [1.0, 0.0]
+    - [0.0, 1.0]
+
+  # Maximum front-wheel steering angle [rad]
+  deltaMax: 0.5
+
+  # Longitudinal acceleration limits [m/s^2]
+  aMin: -3.0
+  aMax: 2.0

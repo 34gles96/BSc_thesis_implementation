@@ -15,23 +15,29 @@ find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 
 
 set(EKF_DIR
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/EKFlib_v4/EKF_func
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/EKFlib_v9/EKF_func
 )
 
-add_library(vehicle_ekf STATIC
-  ${EKF_DIR}/EKF_func.cpp
-  ${EKF_DIR}/EKF_func_initialize.cpp
-  ${EKF_DIR}/EKF_func_terminate.cpp
-  ${EKF_DIR}/EKF_func_data.cpp
-  ${EKF_DIR}/mrdivide_helper.cpp
-  ${EKF_DIR}/rt_nonfinite.cpp
-  ${EKF_DIR}/rtGetInf.cpp
-  ${EKF_DIR}/rtGetNaN.cpp
+
+
+# Collect all MATLAB Coder generated C++ source files
+file(GLOB EKF_SOURCES CONFIGURE_DEPENDS
+    "${EKF_DIR}/*.cpp"
 )
+
+
+
+# Build the generated EKF as a static library
+add_library(vehicle_ekf STATIC
+    ${EKF_SOURCES}
+
+)
+
 
 target_include_directories(vehicle_ekf PUBLIC
   ${EKF_DIR}
@@ -63,6 +69,7 @@ ament_target_dependencies(adas_subscriber
   sensor_msgs
   std_msgs
   message_filters
+  nav_msgs
 )
 
 # ==========================================

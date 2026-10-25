@@ -7,7 +7,7 @@
 #include "config.hpp"
 
 // Draw trajectory and lane line on the original image frame
-void drawDesiredTrajectoryOnImage(
+DesiredTrajectory drawDesiredTrajectoryOnImage(
     cv::Mat &original_bgr_frame,
     double a2, double a1, double a0, // Polynomial coeffs: X(Z) = a2*Z^2 + a1*Z + a0
     double road_height_y,            // Camera height relative to road (in camera frame, Y is down)
@@ -16,6 +16,15 @@ void drawDesiredTrajectoryOnImage(
     const CameraParams &cam,
     struct LanePolynomial lanepoly)
 {
+
+    // for return type
+    DesiredTrajectory result;
+    float nan = std::numeric_limits<float>::quiet_NaN();
+
+    result.xyz_map = cv::Mat_<cv::Vec3f>(
+        original_bgr_frame.size(),
+        cv::Vec3f(nan, nan, nan));
+
     std::vector<cv::Point> lane_2d_pixels;
     std::vector<cv::Point> trajectory_2d_pixels;
 
@@ -75,9 +84,25 @@ void drawDesiredTrajectoryOnImage(
             lane_2d_pixels.push_back(cv::Point(u_line, v_line));
         }
 
-        if (u_center >= 0 && u_center < original_bgr_frame.cols && v_center >= 0 && v_center < original_bgr_frame.rows)
+        if (u_center >= 0 && u_center < original_bgr_frame.cols &&
+            v_center >= 0 && v_center < original_bgr_frame.rows)
         {
-            trajectory_2d_pixels.push_back(cv::Point(u_center, v_center));
+            trajectory_2d_pixels.emplace_back(u_center, v_center);
+
+            // Store one XYZ point per trajectory pixel
+            if (!std::isfinite(result.xyz_map(v_center, u_center)[2]))
+            {
+                result.uv_pixels.emplace_back(u_center, v_center);
+
+                cv::Vec3f XYZ(
+                    static_cast<float>(X_center),
+                    static_cast<float>(Y_center),
+                    static_cast<float>(Z_center));
+
+                result.xyz_points.push_back(XYZ);
+
+                result.xyz_map(v_center, u_center) = XYZ;
+            }
         }
     }
 
@@ -93,4 +118,5 @@ void drawDesiredTrajectoryOnImage(
         cv::line(original_bgr_frame, trajectory_2d_pixels[i - 1], trajectory_2d_pixels[i], cv::Scalar(0, 255, 0), 4);
         cv::circle(original_bgr_frame, trajectory_2d_pixels[i], 3, cv::Scalar(0, 255, 255), -1); // Yellow waypoints
     }
+    return result;
 }

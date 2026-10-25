@@ -1,8 +1,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <vector>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
+#include <mutex>
+
+#include <deque>
+#include <limits>
+#include <cstdint>
 //============ include from MATLAB coder lib ================
 
 // ===============================================
@@ -16,6 +22,18 @@
 #include "desiredTrajectory.hpp"
 #include "pinholeBackProjection.hpp"
 #include "config.hpp"
+#include "initializeCameraMounting.hpp"
+#include "trajectoryToENU.hpp"
+
+// ================for transmitting desiredTrajectorENU as publisher ===============================
+// needs to trsanmit (u,v) -> (X,Y,Z) layout
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
+// for perfomance measurement
+#include <chrono>
+
+constexpr std::size_t MAX_EKF_BUFFER_SIZE = 500; // At roughly 100 Hz, this gives approximately 5 seconds of pose history.
 
 class CameraSubscriber : public rclcpp::Node
 {
@@ -23,6 +41,35 @@ public:
     CameraSubscriber()
         : Node("camera_subscriber") // initialization list for parent class
     {
+
+        // ======================== PUBLISHER FOR DESIREDTRAJECTORY_ENU ========================
+
+        desired_trajectory_pub_ =
+            this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                "/adas/desired_trajectory/enu",
+                rclcpp::QoS(1));
+
+        // ========= subscriton options for async exetution using callback groups =========
+        //  Create callback groups
+        camera_callback_group_ =
+            this->create_callback_group(
+                rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        ekf_callback_group_ =
+            this->create_callback_group(
+                rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        // Subscription options
+        rclcpp::SubscriptionOptions camera_options;
+        camera_options.callback_group = camera_callback_group_;
+
+        rclcpp::SubscriptionOptions ekf_options;
+        ekf_options.callback_group = ekf_callback_group_;
+
+        // MATLAB generated lib inti for transfromation cam2body:
+        camera_transform_initialize();
+        T_cam2body_ = initializeCameraMounting(
+            "/home/base/ADC_27/configData/cam_config/CameraConfig.yaml");
 
         camera_params_ = loadCameraParams(
             "/home/base/ADC_27/configData/cam_config/CameraConfig.yaml");
@@ -34,20 +81,32 @@ public:
             CV_32FC3,
             cv::Scalar(0.0f, 0.0f, 0.0f)); // initialization of pointcloud:size:u x v, one element memlayout : CV_32FC3
 
+        // Subscription for channel of left image stream
         // QoS configuration for camera image streams
         auto qos = rclcpp::QoS(rclcpp::KeepLast(1));
 
-        // Subscription for channel of left image stream
         sub_left_.subscribe(
             this,
             "/vehicles/beamng_bridge/sensors/camera_L/colour",
-            qos.get_rmw_qos_profile());
+            qos.get_rmw_qos_profile(),
+            camera_options);
 
-        // Subscription for channel of right image stream
         sub_right_.subscribe(
             this,
             "/vehicles/beamng_bridge/sensors/camera_R/colour",
-            qos.get_rmw_qos_profile());
+            qos.get_rmw_qos_profile(),
+            camera_options);
+
+        // Subscribe to the EKF-estimated vehicle pose
+        ekf_pose_sub_ =
+            this->create_subscription<geometry_msgs::msg::PoseStamped>(
+                "/adas/ekf/pose",
+                rclcpp::SensorDataQoS(),
+                std::bind(
+                    &CameraSubscriber::write2EKFbuff,
+                    this,
+                    std::placeholders::_1),
+                ekf_options);
 
         sync_ = std::make_shared<
             message_filters::Synchronizer<SyncPolicy>>(
@@ -79,6 +138,11 @@ public:
             cv::StereoSGBM::MODE_SGBM_3WAY);
     }
 
+    ~CameraSubscriber()
+    {
+        camera_transform_terminate();
+    }
+
     // ================================================================
     // Members and internal functions due to event of subscripton
     // ================================================================
@@ -87,6 +151,62 @@ private:
         const sensor_msgs::msg::Image::ConstSharedPtr msg_left,
         const sensor_msgs::msg::Image::ConstSharedPtr msg_right)
     {
+        const auto callback_start = std::chrono::steady_clock::now();
+
+        // =========== CAMERA TIMESTAMP DIAGNOSTIC ===========
+
+        // Current Linux system time [ns]
+        const int64_t now_ns = // callback starts
+            rclcpp::Clock(RCL_SYSTEM_TIME).now().nanoseconds();
+
+        // Timestamp assigned when the left image was captured [ns]
+        const int64_t camera_ns =
+            rclcpp::Time(msg_left->header.stamp).nanoseconds();
+
+        // Apparent age of the image when the callback begins [ms]
+        const double camera_age_ms =
+            static_cast<double>(now_ns - camera_ns) / 1e6;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "CAMERA CALLBACK START | Image age: %.3f ms",
+            camera_age_ms);
+
+        // ================= CAMERA / EKF TIMESTAMP MATCHING =================
+
+        const int64_t cam_time =
+            rclcpp::Time(msg_left->header.stamp).nanoseconds();
+
+        geometry_msgs::msg::PoseStamped closest_pose;
+
+        int64_t min_diff = std::numeric_limits<int64_t>::max();
+        bool found = false;
+
+        {
+            std::lock_guard<std::mutex> lock(ekf_mutex_);
+
+            for (const auto &pose : ekf_buffer_)
+            {
+                const int64_t ekf_time =
+                    rclcpp::Time(pose.header.stamp).nanoseconds();
+
+                const int64_t diff =
+                    std::abs(ekf_time - cam_time);
+
+                if (diff < min_diff)
+                {
+                    min_diff = diff;
+                    closest_pose = pose;
+                    found = true;
+                }
+            }
+        }
+
+        const bool ekf_matched =
+            found && min_diff <= 20'000'000LL;
+
+        // =========== ORIGINAL CAMERA PROCESSING ===========
+
         try
         {
             // Convert ROS Image -> OpenCV image
@@ -241,7 +361,7 @@ private:
             {
                 // DEBUG
                 std::cout << "whiteCurveParams is valid" << std::endl;
-                drawDesiredTrajectoryOnImage(
+                DesiredTrajectory new_trajectory = drawDesiredTrajectoryOnImage(
                     image_bgr8,
                     whiteCurveParams.a2, whiteCurveParams.a1, whiteCurveParams.a0,
                     Y_ground,
@@ -250,13 +370,63 @@ private:
                     camera_params_,
                     whiteCurveParams);
 
+                // ============= PERFOMING TRANSFROMATION (CAM2ENU) DUE TO CLOSELY REALATED TIMESTAMP OF SENSOR =======
+
+                // ================= DIAGNOSTIC LOGGING =================
+
+                if (found)
+                {
+                    const int64_t closest_ekf_time =
+                        rclcpp::Time(closest_pose.header.stamp).nanoseconds();
+
+                    // Positive means camera timestamp is ahead of EKF
+                    const double signed_diff_ms =
+                        static_cast<double>(cam_time - closest_ekf_time) / 1e6;
+
+                    RCLCPP_INFO(
+                        this->get_logger(),
+                        "Camera: %.3f ms | "
+                        "Closest EKF: %.3f ms | "
+                        "Signed difference: %.3f ms | ",
+                        static_cast<double>(cam_time) / 1e6,
+                        static_cast<double>(closest_ekf_time) / 1e6,
+                        signed_diff_ms);
+                }
+                else
+                {
+                    RCLCPP_WARN(
+                        this->get_logger(),
+                        "EKF buffer is empty. No poses received.");
+                }
+
+                // ================= ORIGINAL TRANSFORMATION LOGIC =================
+
+                // Maximum allowed camera-EKF timestamp difference: 20 ms
+                if (ekf_matched)
+                {
+                    auto desired_enu = transformTrajectoryToENU(
+                        new_trajectory,
+                        closest_pose,
+                        T_cam2body_);
+
+                    if (!desired_enu.xyz_enu.empty())
+                    {
+                        publishDesiredTrajectoryENU(
+                            desired_enu,
+                            msg_left->header.stamp);
+                    }
+                }
+                else
+                {
+                    RCLCPP_WARN(
+                        this->get_logger(),
+                        "No matching EKF pose. Minimum difference: %.2f ms",
+                        static_cast<double>(min_diff) / 1e6);
+                }
+
                 // VISUAL DEBUG: Display the rendered trajectory on screen
                 cv::imshow("Desired Lane Trajectory", image_bgr8);
                 cv::waitKey(1); // Refresh window
-            }
-            else
-            {
-                RCLCPP_WARN(this->get_logger(), "Lane polynomial fit is invalid for this frame.");
             }
         }
         catch (const cv_bridge::Exception &e)
@@ -266,6 +436,18 @@ private:
                 "cv_bridge error: %s",
                 e.what());
         }
+
+        const auto callback_end = std::chrono::steady_clock::now();
+
+        const double processing_ms =
+            std::chrono::duration<double, std::milli>(
+                callback_end - callback_start)
+                .count();
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Camera processing duration: %.2f ms",
+            processing_ms);
     }
 
     message_filters::Subscriber<sensor_msgs::msg::Image> sub_left_;  // left image subsripton
@@ -282,23 +464,114 @@ private:
     cv::Mat white_line_imgR;
     cv::Mat white_line_imgL;
     CameraParams camera_params_;
+    CamType::Transform4x4_Cam2Body T_cam2body_;
     double laneW = 12;
     double Y_ground = 1.65; // hardcoded, but in real scenrio it depensd how i mount tha camera onto the vehicle
+
+    // =========================== CALLBACK GROUPS ============================
+    // Callback groups
+    rclcpp::CallbackGroup::SharedPtr camera_callback_group_;
+    rclcpp::CallbackGroup::SharedPtr ekf_callback_group_;
+
+    // ==================== SYNC DETECTED TRAJECTORY DETERMINED HZ BY CAM STREAM AND EKF POSE ========================
+    std::deque<geometry_msgs::msg::PoseStamped> ekf_buffer_;
+    std::mutex ekf_mutex_;
+
+    // ======================== SUBSCRIBER FOR TRANMITTED POSE BY EKF ========================
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr ekf_pose_sub_;
+    // tranmitted latest avaible ekf data
+
+    // ======================== PUBLISHER FOR DESIREDTRAJECTORY_ENU ========================
+
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+        desired_trajectory_pub_;
+
+    void publishDesiredTrajectoryENU(
+        const DesiredTrajectoryENU &trajectory,
+        const builtin_interfaces::msg::Time &camera_stamp)
+    {
+        if (trajectory.uv_pixels.size() != trajectory.xyz_enu.size())
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "Trajectory pixel/ENU size mismatch");
+            return;
+        }
+
+        sensor_msgs::msg::PointCloud2 msg;
+
+        msg.header.stamp = camera_stamp;
+        msg.header.frame_id = "enu";
+        msg.height = 1;
+        msg.is_dense = true;
+
+        sensor_msgs::PointCloud2Modifier modifier(msg);
+
+        modifier.setPointCloud2Fields(
+            5,
+            "u", 1, sensor_msgs::msg::PointField::INT32,
+            "v", 1, sensor_msgs::msg::PointField::INT32,
+            "x", 1, sensor_msgs::msg::PointField::FLOAT64,
+            "y", 1, sensor_msgs::msg::PointField::FLOAT64,
+            "z", 1, sensor_msgs::msg::PointField::FLOAT64);
+
+        modifier.resize(trajectory.xyz_enu.size());
+
+        sensor_msgs::PointCloud2Iterator<int32_t> u(msg, "u");
+        sensor_msgs::PointCloud2Iterator<int32_t> v(msg, "v");
+
+        sensor_msgs::PointCloud2Iterator<double> x(msg, "x");
+        sensor_msgs::PointCloud2Iterator<double> y(msg, "y");
+        sensor_msgs::PointCloud2Iterator<double> z(msg, "z");
+
+        for (size_t i = 0; i < trajectory.xyz_enu.size(); ++i)
+        {
+            *u = trajectory.uv_pixels[i].x;
+            *v = trajectory.uv_pixels[i].y;
+
+            *x = trajectory.xyz_enu[i][0];
+            *y = trajectory.xyz_enu[i][1];
+            *z = trajectory.xyz_enu[i][2];
+
+            ++u;
+            ++v;
+            ++x;
+            ++y;
+            ++z;
+        }
+
+        desired_trajectory_pub_->publish(msg);
+    }
+
+    void write2EKFbuff(
+        const geometry_msgs::msg::PoseStamped &msg)
+    {
+
+        std::lock_guard<std::mutex> lock(ekf_mutex_);
+
+        ekf_buffer_.push_back(msg);
+
+        // Keep maximum 30 poses (~1 second at 30 Hz)
+        if (ekf_buffer_.size() > MAX_EKF_BUFFER_SIZE)
+        {
+            ekf_buffer_.pop_front();
+        }
+    }
 };
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
 
-    //  Initialize MATLAB generated model states & persistent variables
-
     auto node = std::make_shared<CameraSubscriber>();
 
-    rclcpp::spin(node);
+    rclcpp::executors::MultiThreadedExecutor executor(
+        rclcpp::ExecutorOptions(),
+        4);
 
-    // Terminate/clean up MATLAB model resources safely
+    executor.add_node(node);
+    executor.spin();
 
     rclcpp::shutdown();
-
     return 0;
 }
