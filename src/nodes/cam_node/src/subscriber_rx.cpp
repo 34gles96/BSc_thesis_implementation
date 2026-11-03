@@ -6,6 +6,8 @@
 #include <opencv2/opencv.hpp>
 #include <mutex>
 
+#include "ThreadJoinGuard.hpp"
+
 #include <deque>
 #include <limits>
 #include <cstdint>
@@ -41,6 +43,10 @@ public:
     CameraSubscriber()
         : Node("camera_subscriber") // initialization list for parent class
     {
+
+        // Enable ROS 2 simulation time
+        this->set_parameter(
+            rclcpp::Parameter("use_sim_time", true));
 
         // ======================== PUBLISHER FOR DESIREDTRAJECTORY_ENU ========================
 
@@ -147,29 +153,54 @@ public:
     // Members and internal functions due to event of subscripton
     // ================================================================
 private:
-    void stereo_callback(
+    void stereo_callback( // introductiong threads for parallal exectution between: pinholeXYZ and line_detection
         const sensor_msgs::msg::Image::ConstSharedPtr msg_left,
         const sensor_msgs::msg::Image::ConstSharedPtr msg_right)
     {
-        const auto callback_start = std::chrono::steady_clock::now();
 
-        // =========== CAMERA TIMESTAMP DIAGNOSTIC ===========
+        // 1. Get the camera measurement timestamp
+        const rclcpp::Time image_stamp(
+            msg_left->header.stamp,
+            RCL_ROS_TIME);
 
-        // Current Linux system time [ns]
-        const int64_t now_ns = // callback starts
-            rclcpp::Clock(RCL_SYSTEM_TIME).now().nanoseconds();
-
-        // Timestamp assigned when the left image was captured [ns]
-        const int64_t camera_ns =
-            rclcpp::Time(msg_left->header.stamp).nanoseconds();
-
-        // Apparent age of the image when the callback begins [ms]
-        const double camera_age_ms =
-            static_cast<double>(now_ns - camera_ns) / 1e6;
+        // 2. Compare with the latest ROS simulation clock
+        const double clock_difference_ms =
+            (this->get_clock()->now() - image_stamp).seconds() * 1000.0;
 
         RCLCPP_INFO(
             this->get_logger(),
-            "CAMERA CALLBACK START | Image age: %.3f ms",
+            "ROS clock - camera timestamp: %.3f ms",
+            clock_difference_ms);
+
+        const auto callback_start = std::chrono::steady_clock::now();
+
+        // ============ SIMULATION TIME DIAGNOSTIC ============
+
+        // Current ROS time.
+        // When use_sim_time=true, this comes from /clock.
+        const rclcpp::Time now = this->get_clock()->now();
+
+        // Camera message timestamp, interpreted as ROS time.
+        const rclcpp::Time camera_stamp(
+            msg_left->header.stamp,
+            RCL_ROS_TIME);
+
+        // Simulation clock might not be initialized yet.
+        if (now.nanoseconds() == 0)
+        {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Waiting for BeamNG simulation clock...");
+            return;
+        }
+
+        // Age of the image in simulation time.
+        const double camera_age_ms =
+            (now - camera_stamp).seconds() * 1000.0;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "CAMERA CALLBACK START | Simulation image age: %.3f ms",
             camera_age_ms);
 
         // ================= CAMERA / EKF TIMESTAMP MATCHING =================
@@ -220,13 +251,63 @@ private:
                                "bgr8")
                                ->image;
 
+            using Clock_debug = std::chrono::steady_clock; // for timstamp measuring using cpu ticks in std::milli resolution storered in double tpye
+            std::exception_ptr stereo_exception;           // for proagation exception from child thread in ordr to not call std::termiante() when exception occured in child thread
+            cv::Mat output_cloud;                          // stadlon resources of child thread output
+            double stereo_ms = 0.0;
+            const auto parallel_start = Clock_debug::now();
+
+            std::thread to_XYZ_transfrom_thread( // Constructing std::thread starts the new thread, to_XYZ_transfrom_thread start exectution from constructing
+                [this,
+                 left = image_bgr8,
+                 right = image_bgr8R_, // coppy from soroounding scopr
+                 &output_cloud,        // reference from sourinding scope
+                 &stereo_exception,
+                 &stereo_ms]() mutable
+                {
+                    try
+                    {
+
+                        const auto child_thread_start = Clock_debug::now();
+
+                        cv::Mat cloud_buffer = cv::Mat::zeros( //...
+                            left.size(),
+                            CV_32FC3);
+
+                        // invokint thread func
+
+                        // // TRANSFORMING  (u,v) w coorinate into XYZ (camera framte)
+                        output_cloud = pinHole2XYZ(
+                            left,
+                            right,
+                            stereo_,
+                            camera_params_,
+                            cloud_buffer);
+
+                        const auto finish = Clock_debug::now();
+                        stereo_ms = std::chrono::duration<double, std::milli>(
+                                        finish - child_thread_start)
+                                        .count();
+                    }
+                    catch (...)
+                    {
+
+                        stereo_exception = std::current_exception();
+                    }
+                });
+
+            // Ensures joining even on early return or exception
+            ThreadJoinGuard thread_guard(to_XYZ_transfrom_thread);
+
+            // ===================== Executed by the ROS executor thread =============================== // multiexclsuive way (no another instance of this ros2 exectutor thread)
+
             // transfroming the image into hsv color space
             cv::Mat hsv;
             cv::cvtColor(image_bgr8, hsv, cv::COLOR_BGR2HSV);
 
             // Split HSV into 3 separate single-channel images
-            std::vector<cv::Mat> hsv_channels;
-            cv::split(hsv, hsv_channels);
+            // std::vector<cv::Mat> hsv_channels;
+            // cv::split(hsv, hsv_channels);
 
             // 3. Apply CLAHE to the V (Value/Brightness) channel
             // cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
@@ -286,9 +367,9 @@ private:
                 cv::Scalar(0, 255, 0),
                 2);
 
-            cv::imshow("ROI Debug View", debug_image);
-            cv::waitKey(1);
-            // --------------------------------
+            // cv::imshow("ROI Debug View", debug_image);
+            // cv::waitKey(1); //TODO:recomment
+            //  --------------------------------
 
             cv::Mat mask_roi = mask(roi_area); // applying boundary
 
@@ -320,15 +401,6 @@ private:
             // creating a black img w intialization
             white_line_imgL = cv::Mat::zeros(image_bgr8.size(), CV_8UC1);
 
-            // safity check
-            if (white_line_imgL.size() != point_cloud_3D_.size())
-            {
-                RCLCPP_ERROR(
-                    this->get_logger(),
-                    "Mask and point cloud dimensions do not match");
-                return;
-            }
-
             for (const auto &pt : white_line_pts)
             {
                 // checking boinds
@@ -347,14 +419,118 @@ private:
             // cv::imshow("White Lane Mask", mask);
             // cv::waitKey(0);
 
-            // TRANSFORMING  (u,v) w coorinate into XYZ (camera framte)
-            point_cloud_3D_ = pinHole2XYZ(image_bgr8, image_bgr8R_, stereo_, camera_params_, point_cloud_3D_);
+            // Lane detection has completed
+            const auto lane_finished = Clock_debug::now();
+            // wating for 'to_XYZ_transfrom_thread finish w .join()
+            to_XYZ_transfrom_thread.join(); // TODO: checkin joinable ??
+            // checking any exception occoured i child thread.
+            if (stereo_exception)
+            {
+                std::rethrow_exception(stereo_exception); // who chacting?
+            }
+            // Take the result from the additional thread
+            point_cloud_3D_ = std::move(output_cloud);
+
+            // Validate both results
+            if (point_cloud_3D_.empty() ||
+                white_line_imgL.size() != point_cloud_3D_.size())
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "Invalid reconstructed cloud or dimension mismatch");
+                return;
+            }
+
+            const auto parallel_finished = Clock_debug::now();
+
+            const double lane_ms =
+                std::chrono::duration<double, std::milli>(
+                    lane_finished - parallel_start)
+                    .count();
+
+            const double parallel_ms =
+                std::chrono::duration<double, std::milli>(
+                    parallel_finished - parallel_start)
+                    .count();
+
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Lane: %.2f ms | Stereo: %.2f ms | Combined: %.2f ms",
+                lane_ms,
+                stereo_ms,
+                parallel_ms);
 
             struct LanePolynomial whiteCurveParams = fitLanePolynomialOpenCV(white_line_imgL, point_cloud_3D_, laneW);
 
             // ============== DEBUG ================= ======== ========
             std::cout << "dinamically caluclated road witdh is: " << laneW << std::endl;
             // ======== ======== ======== ======== ======== ========
+
+            /*
+
+            // ==================== obstacle detection params =================
+
+        // Convert the existing CV_32FC3 point cloud to CV_64FC3
+        // for detectRoad() and detectObstacles().
+        cv::Mat_<cv::Vec3d> XYZ_cam;
+        point_cloud_3D_.convertTo(XYZ_cam, CV_64FC3);
+
+        if (detectRoad(road_plane_, XYZ_cam))
+        {
+            // ========== DETECT OBSTACLES ==========
+
+            detectObstacles(
+                XYZ_cam,
+                road_plane_,
+                obstacleTreshold_,
+                heightMap_,
+                ObstacleMask,
+                upDirecton);
+
+            // ========== CREATE INDEPENDENT COPIES ==========
+
+            cv::Mat rawImage = image_bgr8.clone(); // deep copy
+            filteredImage_ = image_bgr8.clone();
+
+            cv::Mat1b filteredMask = ObstacleMask.clone();
+
+            // ========== RAW OBSTACLE DETECTION ==========
+
+            drawDetectedObstacles(
+                ObstacleMask,
+                rawImage);
+
+            // ========== FILTER OBSTACLES TO LANE ==========
+
+            filterObstaclesToLane(
+                XYZ_cam,
+                filteredMask,
+                whiteCurveParams,
+                laneW);
+
+            // Draw bounding boxes using the filtered mask
+            drawDetectedObstacles(
+                filteredMask,
+                filteredImage_);
+
+            // ========== DISPLAY BOTH RESULTS ==========
+
+            cv::imshow("Detected Obstacles", rawImage);
+            cv::imshow("Detected Obstacles in Lane", filteredImage_);
+            cv::imshow("Raw Mask", ObstacleMask);
+            cv::imshow("Filtered Mask", filteredMask);
+
+            cv::waitKey(1);
+        }
+
+        else
+        {
+            RCLCPP_WARN(this->get_logger(), "Road plane not detected for this frame.");
+        }
+
+
+
+            */
 
             // ONLY draw if the polynomial was successfully solved
             if (whiteCurveParams.isValid)
@@ -425,8 +601,8 @@ private:
                 }
 
                 // VISUAL DEBUG: Display the rendered trajectory on screen
-                cv::imshow("Desired Lane Trajectory", image_bgr8);
-                cv::waitKey(1); // Refresh window
+                // cv::imshow("Desired Lane Trajectory", image_bgr8);
+                // cv::waitKey(1); // Refresh window TODO!
             }
         }
         catch (const cv_bridge::Exception &e)

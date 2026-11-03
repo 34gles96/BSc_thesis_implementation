@@ -49,7 +49,10 @@ public:
             GnssMsg>;
 
     AdasSensorSubscriber()
-        : Node("adas_sensor_subscriber")
+        : Node(
+              "adas_sensor_subscriber",
+              rclcpp::NodeOptions().append_parameter_override(
+                  "use_sim_time", true))
     {
         // ====================  PUBLISHER  ====================
         // initialization of publisher for tranmtteing estimated pose ofr subscribers: camNode(trajectory),
@@ -453,6 +456,18 @@ private:
             generatedImu,
             generatedGnss,
             generatedVehicle);
+
+        const double imu_sim_sec =
+            rclcpp::Time(msg->header.stamp).seconds();
+
+        const double ros_sim_now_sec =
+            this->get_clock()->now().seconds();
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "IMU stamp: %.3f s | ROS sim now: %.3f s",
+            imu_sim_sec,
+            ros_sim_now_sec);
 
         EKF_func(
             &generatedImu,

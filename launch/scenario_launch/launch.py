@@ -62,20 +62,33 @@ def generate_launch_description():
     # FAST IMU NODE
     # ============================================================
 
+    
     imu_fast_node = Node(
-        name='imu_fast_node',
         package='imu_fast',
         executable='imu_fast_node',
+        name='imu_fast_node',
         output='screen',
         emulate_tty=True,
-        parameters=[
-            {'host': '127.0.0.1'},
-            {'port': 25252},
-            {'vehicle_id': 'ego'},
-            {'gyro_noise_std': 0.005},
-            {'acc_noise_std': 0.05}
-        ]
+        parameters=[{
+            'host': '127.0.0.1',
+            'port': 25252,
+            'vehicle_id': 'ego',
+
+            # Sensor noise
+            'gyro_noise_std': 0.005,
+            'acc_noise_std': 0.05,
+
+            # Constant gyroscope bias
+            'gyro_bias_x': 0.01,
+            'gyro_bias_y': -0.005,
+            'gyro_bias_z': 0.008,
+
+            # The IMU publisher uses the sensor's own
+            # BeamNG measurement timestamp.
+            'use_sim_time': False,
+        }]
     )
+
 
     # ============================================================
     # START AGENT AFTER SCENARIO

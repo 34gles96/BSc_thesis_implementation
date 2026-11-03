@@ -64,6 +64,7 @@ add_executable(subscriber_rx
   src/pinholeBackProjection.cpp
   src/readConfig.cpp
   src/initializeCameraMounting.cpp
+  src/obstacleDetect.cpp
 )
 
 target_include_directories(subscriber_rx PRIVATE
