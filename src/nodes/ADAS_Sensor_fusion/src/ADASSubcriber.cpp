@@ -80,6 +80,7 @@ public:
         myLOG::initializeGnssLog();
         myLOG::initializeEkfLog();
         ekfReport::initializeReport();
+        ENU_origin::initializeENU_origin_file();
 
         // =========================================================
         // initialize EKF state
@@ -258,6 +259,7 @@ public:
 
         myLOG::closeGnssLog();
         myLOG::closeEkfLog();
+        ENU_origin::closeENU_file();
 
         ekfReport::closeReport(); // stop ros2 bag via sript
     }
@@ -475,10 +477,24 @@ private:
             &generatedVehicle,
             &generated_ekf_state_);
 
+        if (gnss_received_)
+        {
+            RCLCPP_INFO(
+                this->get_logger(),
+                "ENU origin ECEF: X=%.9f, Y=%.9f, Z=%.9f",
+                generated_ekf_state_.p_ecef0[0],
+                generated_ekf_state_.p_ecef0[1],
+                generated_ekf_state_.p_ecef0[2]);
+        }
+
         // loging estimated pos.
         myLOG::logEkfState(
             generatedImu.timestamp,
             generated_ekf_state_);
+
+        ENU_origin::performWriting_ENU0(
+            generated_ekf_state_,
+            generatedImu.timestamp);
 
         //  ================== TRANMITTING ESTIMATED POSE VIA PUBLISHER =======================================
 

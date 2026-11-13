@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <mutex>
 #include <iostream>
+#include <cmath>
 
 namespace myLOG
 {
@@ -196,8 +197,7 @@ namespace ekfReport
         // ================================================================
 
         const int bag_result =
-            std::system(
-                "/ADC_27/scripts/ekf_rosbag.sh start");
+            std::system("bash /ADC_27/scripts/ekf_rosbag.sh start");
 
         if (bag_result != 0)
         {
@@ -451,8 +451,7 @@ namespace ekfReport
         // ================================================================
 
         const int bag_result =
-            std::system(
-                "/ADC_27/scripts/ekf_rosbag.sh stop");
+            std::system("bash /ADC_27/scripts/ekf_rosbag.sh stop");
 
         if (bag_result != 0)
         {
@@ -462,4 +461,98 @@ namespace ekfReport
         }
     }
 
+}
+
+// ============================================================
+// LOG ENU ORIGIN EXPRESSED IN ECEF COORDINATES
+// ============================================================
+
+namespace ENU_origin
+{
+    std::ofstream enu0_file;
+    std::mutex enu0_mutex;
+
+    bool originAlreadyWritten = false;
+
+    void initializeENU_origin_file()
+    {
+        std::lock_guard<std::mutex> lock(enu0_mutex);
+
+        std::filesystem::create_directories(
+            "/ADC_27/logs");
+
+        enu0_file.open(
+            "/ADC_27/logs/ENU0.txt",
+            std::ios::out | std::ios::trunc);
+
+        if (!enu0_file.is_open())
+        {
+            std::cerr
+                << "Could not open ENU origin log file.\n";
+            return;
+        }
+
+        originAlreadyWritten = false;
+
+        enu0_file << std::setprecision(17);
+
+        enu0_file
+            << "timestamp_ms,"
+            << "X0_ecef_m,"
+            << "Y0_ecef_m,"
+            << "Z0_ecef_m\n";
+    }
+
+    void performWriting_ENU0(
+        const GeneratedEkfState &ekfstate,
+        double timestamp_ms)
+    {
+        std::lock_guard<std::mutex> lock(enu0_mutex);
+
+        if (!enu0_file.is_open() || originAlreadyWritten)
+        {
+            return;
+        }
+
+        const double *p = ekfstate.p_ecef0;
+
+        if (!std::isfinite(timestamp_ms) ||
+            !std::isfinite(p[0]) ||
+            !std::isfinite(p[1]) ||
+            !std::isfinite(p[2]))
+        {
+            return;
+        }
+
+        const double radius = std::sqrt(
+            p[0] * p[0] +
+            p[1] * p[1] +
+            p[2] * p[2]);
+
+        // Reject zero/uninitialized Earth coordinates.
+        if (radius < 6.0e6)
+        {
+            return;
+        }
+
+        enu0_file
+            << timestamp_ms << ","
+            << p[0] << ","
+            << p[1] << ","
+            << p[2] << "\n";
+
+        enu0_file.flush();
+
+        originAlreadyWritten = true;
+    }
+
+    void closeENU_file()
+    {
+        std::lock_guard<std::mutex> lock(enu0_mutex);
+
+        if (enu0_file.is_open())
+        {
+            enu0_file.close();
+        }
+    }
 }

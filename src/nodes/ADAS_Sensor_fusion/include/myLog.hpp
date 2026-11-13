@@ -54,3 +54,16 @@ namespace ekfReport
     void closeReport();
 
 }
+
+namespace ENU_origin
+{
+
+    void initializeENU_origin_file();
+
+    void performWriting_ENU0(
+        const GeneratedEkfState &ekfstate,
+        double timestamp_ms);
+
+    void closeENU_file();
+
+}

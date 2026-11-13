@@ -20,7 +20,7 @@ find_package(nav_msgs REQUIRED)
 
 
 set(EKF_DIR
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/EKFlib_v9/EKF_func
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/EKFlib_v10/EKF_func
 )
 
 

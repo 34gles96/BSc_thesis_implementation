@@ -601,8 +601,8 @@ private:
                 }
 
                 // VISUAL DEBUG: Display the rendered trajectory on screen
-                // cv::imshow("Desired Lane Trajectory", image_bgr8);
-                // cv::waitKey(1); // Refresh window TODO!
+                cv::imshow("Desired Lane Trajectory", image_bgr8);
+                cv::waitKey(1); // Refresh window TODO!
             }
         }
         catch (const cv_bridge::Exception &e)

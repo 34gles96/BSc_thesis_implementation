@@ -27,6 +27,8 @@
 
 #include <functional>
 
+#include <rclcpp/create_timer.hpp>
+
 #include "mpcInterface.hpp"
 
 struct TrajectoryPoint
@@ -48,7 +50,11 @@ struct TrajectoryPointVector
 class MPCSubscriber : public rclcpp::Node
 {
 public:
-    MPCSubscriber() : Node("mpc_subscriber")
+    MPCSubscriber()
+        : Node(
+              "mpc_subscriber",
+              rclcpp::NodeOptions()
+                  .append_parameter_override("use_sim_time", true))
     {
         mpcController_initialize();
 
@@ -93,8 +99,10 @@ public:
             this->create_publisher<beamng_msgs::msg::VehicleControl>(
                 "/control", 10);
 
-        mpc_timer_ = this->create_wall_timer(
-            std::chrono::nanoseconds(33'333'333), // 30 Hz
+        mpc_timer_ = rclcpp::create_timer(
+            this,
+            this->get_clock(),
+            rclcpp::Duration::from_seconds(1.0 / 30.0),
             std::bind(&MPCSubscriber::performMPC, this),
             mpc_group_);
     }
@@ -308,17 +316,22 @@ private:
         // 4. CALCULATE DYNAMIC MPC SAMPLING PERIOD
         // =====================================================
 
-        const auto current_time =
-            std::chrono::steady_clock::now();
+        const rclcpp::Time current_time =
+            this->get_clock()->now();
 
+        if (current_time.nanoseconds() <= 0)
+            return;
+
+        // Ts represents the elapsed simulation seconds between MPC executions.
         double Ts = mpc_cfg_.Ts;
 
         if (has_last_mpc_start_)
         {
-            Ts = std::chrono::duration<double>(
-                     current_time - last_mpc_start_)
-                     .count();
+            Ts = (current_time - last_mpc_start_).seconds();
         }
+
+        if (!std::isfinite(Ts) || Ts <= 0.0)
+            return;
 
         if (!std::isfinite(Ts) || Ts <= 0.0)
             return;
@@ -516,7 +529,7 @@ private:
     // MPC alg cfg
     MPC::mpc_cfg mpc_cfg_;
     bool has_last_mpc_start_{false};
-    std::chrono::steady_clock::time_point last_mpc_start_;
+    rclcpp::Time last_mpc_start_{0, 0, RCL_ROS_TIME};
 
     // Previous MPC-requested control [steering rad, acceleration m/s²]
     std::array<double, 2> u_last_applied_{0.0, 0.0};

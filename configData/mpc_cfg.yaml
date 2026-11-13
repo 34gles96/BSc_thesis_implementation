@@ -1,13 +1,13 @@
 
 mpc:
   # Prediction horizon (number of future steps)
-  Np: 25
+  Np: 10
 
   # MPC sampling period [s] (30 Hz)
   Ts: 0.0333333333
 
   # Vehicle wheelbase [m]
-  L: 2.85
+  L: 1.85
 
   # State tracking weights: [E, N, yaw, velocity]
   Q:
@@ -31,4 +31,4 @@ mpc:
 
   # Longitudinal acceleration limits [m/s^2]
   aMin: -3.0
-  aMax: 2.0
+  aMax: 3.0

@@ -41,7 +41,7 @@ namespace MPC
         {
             for (size_t col = 0; col < 4; col++)
             {
-                params.Q[row + 4 * col] = Q["row"]["col"].as<double>();
+                params.Q[row + 4 * col] = Q[row][col].as<double>();
             }
         }
 
@@ -49,8 +49,8 @@ namespace MPC
         {
             for (size_t col = 0; col < 2; col++)
             {
-                params.R[row + 2 * col] = R["row"]["col"].as<double>();
-                params.S[row + 2 * col] = S["row"]["col"].as<double>();
+                params.R[row + 2 * col] = R[row][col].as<double>();
+                params.S[row + 2 * col] = S[row][col].as<double>();
             }
         }
     }
