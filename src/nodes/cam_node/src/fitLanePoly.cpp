@@ -1,6 +1,14 @@
 #include "fitLanePoly.hpp"
-#include <cmath>
+#include "road_boundary_fitting.hpp"
 #include "config.hpp"
+#include "roadLineValidator.hpp"
+
+#include <cmath>
+#include <iostream>
+
+const double minDepth = 0.1;
+const double maxDepth = 30.0;
+const double binSize = 0.5;
 
 LanePolynomial fitLanePolynomialOpenCV(
     const cv::Mat &uvIMG, const cv::Mat &XYZ_IMG, double &road_width) // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
@@ -79,93 +87,101 @@ LanePolynomial fitLanePolynomialOpenCV(
     }
     nb_whitePX_right = white_line_ptsR.size();
     //*******//*******//*******//*******//*******//*******//*******//*******//******* */
-    bool use_left_lane =
-        white_line_ptsL.size() >= white_line_ptsR.size();
+    // =======================================================================
+    // VALIDATE LEFT AND RIGHT ROAD-LINE CANDIDATES
+    // =======================================================================
 
-    const std::vector<cv::Point> &selected_lane = use_left_lane ? white_line_ptsL : white_line_ptsR;
-    //*******//*******//*******//*******//*******//*******//*******//*******//******* */
-    int whitePixels = 0;
-    int invalidDepth = 0;
-    int rejectedByColumn = 0;
-    int validPoints = 0;
+    const double maxAllowedWidth = 0.30;
+    const double minValidBinRatio = 0.6;
 
-    std::vector<double> X_pts;
-    std::vector<double> Z_pts;
+    const bool leftValid = isValidRoadLine(
+        XYZ_IMG, white_line_ptsL,
+        minDepth, maxDepth, binSize,
+        maxAllowedWidth, minValidBinRatio);
 
-    for (const auto &pixel : selected_lane)
+    const bool rightValid = isValidRoadLine(
+        XYZ_IMG, white_line_ptsR,
+        minDepth, maxDepth, binSize,
+        maxAllowedWidth, minValidBinRatio);
+
+    // =======================================================================
+    // SELECT THE ROAD LINE
+    // =======================================================================
+
+    bool use_left_lane;
+
+    if (leftValid && rightValid)
     {
-        cv::Vec3f pt3D = XYZ_IMG.at<cv::Vec3f>(pixel.y, pixel.x);
-        float X = pt3D[0];
-        float Z = pt3D[2];
-
-        if (
-            std::isfinite(X) &&
-            std::isfinite(Z) &&
-            Z > 0.1f &&
-            Z <= 30.0f)
-        {
-            X_pts.push_back(
-                static_cast<double>(X));
-
-            Z_pts.push_back(
-                static_cast<double>(Z));
-
-            ++validPoints;
-        }
-        else
-        {
-            ++invalidDepth;
-        }
+        // Both candidates are valid: select the one with more white pixels
+        use_left_lane =
+            white_line_ptsL.size() >= white_line_ptsR.size();
+    }
+    else if (leftValid)
+    {
+        use_left_lane = true;
+    }
+    else if (rightValid)
+    {
+        use_left_lane = false;
+    }
+    else
+    {
+        use_left_lane =
+            !(white_line_ptsL.size() >= white_line_ptsR.size()); // less white pixel is more accuray here..
     }
 
-    // ================= DEBUG ===================================================
-    std::cout
-        << "White pixels: " << whitePixels << '\n'
-        << "Rejected by column: " << rejectedByColumn << '\n'
-        << "Invalid depth: " << invalidDepth << '\n'
-        << "Valid points: " << validPoints << '\n';
-    // ====================================================================
+    const std::vector<cv::Point> &selected_lane =
+        use_left_lane ? white_line_ptsL : white_line_ptsR;
+
+    // const std::vector<cv::Point> &selected_lane_2ndBest_lane = !(use_left_lane) ? white_line_ptsL : white_line_ptsR;
+    //*******//*******//*******//*******//*******//*******//*******//*******//******* */
+    //  =======================================================================
+    //  EXTRACT REPRESENTATIVE POINTS AND FIT SECOND-ORDER POLYNOMIAL
+    //  =======================================================================
+
+    int invalidDepth = 0;
+    int validPoints = 0;
+
+    // 1. Extract representative (Z, X) points
+    std::vector<cv::Point2d> XZ =
+        extractRepresentativePoints(
+            XYZ_IMG,
+            selected_lane,
+            minDepth,
+            maxDepth,
+            binSize);
+
+    // 2. Fit the second-order polynomial
+    std::cout << "Representative points for polyfit: "
+              << XZ.size() << std::endl;
 
     LanePolynomial result;
-    int N = X_pts.size();
 
-    // Debug print to see how many 2D pixels actually have valid 3D stereo depth
-    std::cout << "Valid 3D lane points for polyfit: " << N << std::endl;
-
-    // Need at least 3 points to solve for 3 parameters
-    if (N < 3)
+    if (XZ.size() < 3)
     {
-        std::cerr << "Warning: Not enough points to fit polynomial!" << std::endl;
+        std::cerr << "Warning: Not enough representative points!"
+                  << std::endl;
         return result;
     }
 
-    // 1. Construct matrix A (N x 3) and vector B (N x 1)
-    cv::Mat A(N, 3, CV_64F);
-    cv::Mat B(N, 1, CV_64F);
+    std::vector<double> coeffs = secondOrderPolyFitting(XZ);
 
-    for (int i = 0; i < N; ++i)
+    if (coeffs.size() == 3)
     {
-        double z = Z_pts[i];
-        A.at<double>(i, 0) = z * z; // Z^2 column
-        A.at<double>(i, 1) = z;     // Z column
-        A.at<double>(i, 2) = 1.0;   // Constant 1 column
+        result.a2 = coeffs[0];
+        result.a1 = coeffs[1];
+        result.a0 = coeffs[2];
 
-        B.at<double>(i, 0) = X_pts[i]; // Target X column
-    }
-
-    // 2. Solve A * coeffs = B using SVD
-    cv::Mat coeffs;
-    bool success = cv::solve(A, B, coeffs, cv::DECOMP_SVD);
-
-    if (success)
-    {
-        result.a2 = coeffs.at<double>(0, 0);
-        result.a1 = coeffs.at<double>(1, 0);
-        result.a0 = coeffs.at<double>(2, 0);
         result.isValid = true;
-        result.is_left_lane = (nb_whitePX_left > nb_whitePX_right) ? true : false;
+        result.is_left_lane =
+            use_left_lane;
     }
-
+    else
+    {
+        std::cerr << "Warning: Polynomial fitting failed!"
+                  << std::endl;
+        return result;
+    }
     // =======================================================================
     // CALCULATE ROAD WIDHT
     // =======================================================================

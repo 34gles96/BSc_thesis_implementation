@@ -467,13 +467,13 @@ private:
         // Assign cmd.steering using your calibrated conversion
         // before publishing.
 
+        cmd.gear = static_cast<int8_t>(1);
         cmd.steering = steering_normalized;
         cmd.throttle = pedals.throttle;
         cmd.brake = pedals.brake;
 
         cmd.parkingbrake = 0.0;
         cmd.clutch = 0.0;
-        cmd.gear = 1; // Verify this for your vehicle's gearbox
 
         control_pub_->publish(cmd);
 

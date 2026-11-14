@@ -107,10 +107,10 @@
                     ],
                     "ref_lat": 50.5312,
                     "ref_lon": 18.0872,
-                    "hAcc_mean": 0.02,
-                    "vAcc_mean": 0.05,
+                    "hAcc_mean": 0.01,
+                    "vAcc_mean": 0.03,
                     "hAcc_std": 0.005,
-                    "vAcc_std": 0.010,
+                    "vAcc_std": 0.005,
                     "sAcc_mean": 0.05,
                     "sAcc_std": 0.010
                 },

@@ -5,19 +5,27 @@
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include <mutex>
-
+#include "detectObstacles.hpp"
 #include "ThreadJoinGuard.hpp"
 
 #include <deque>
 #include <limits>
 #include <cstdint>
+#include "BirdEyeViewVisualizer.hpp"
+#include "extractLaneDepthRange.hpp"
 //============ include from MATLAB coder lib ================
 
+// debug
+#include "debugWhiteLine.hpp"
+
+#include <cmath>
 // ===============================================
 // New includes for synchronization
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
+#include <message_filters/sync_policies/exact_time.h>
+#include <sensor_msgs/msg/image.hpp>
 
 #include "readConfig.hpp"
 #include "fitLanePoly.hpp"
@@ -36,6 +44,15 @@
 #include <chrono>
 
 constexpr std::size_t MAX_EKF_BUFFER_SIZE = 500; // At roughly 100 Hz, this gives approximately 5 seconds of pose history.
+
+// Inside your class members (e.g., in CameraSubscriber)
+struct SmoothedPlane
+{
+    double A = 0.0;
+    double B = -1.0; // Initial gravity vector approximation in camera frame
+    double C = 0.0;
+    double D = 1.05; // Your nominal camera height
+} smoothed_plane_;
 
 class CameraSubscriber : public rclcpp::Node
 {
@@ -114,11 +131,21 @@ public:
                     std::placeholders::_1),
                 ekf_options);
 
-        sync_ = std::make_shared<
-            message_filters::Synchronizer<SyncPolicy>>(
-            SyncPolicy(10),
-            sub_left_,
-            sub_right_);
+        // Keep queue size small (2) to prevent old frame accumulation
+        // sync_ = std::make_shared<message_filters::Synchronizer<ExactSyncPolicy>>(
+        // ExactSyncPolicy(100), sub_left_, sub_right_);
+        using ApproxSyncPolicy = message_filters::sync_policies::ApproximateTime<
+            sensor_msgs::msg::Image,
+            sensor_msgs::msg::Image>;
+
+        // Pass the queue size (2) directly to Synchronizer, then set the 8 ms max interval via getPolicy()
+        sync_ = std::make_shared<message_filters::Synchronizer<ApproxSyncPolicy>>(
+            5, sub_left_, sub_right_);
+
+        sync_->getPolicy()->setMaxIntervalDuration(
+            rclcpp::Duration(std::chrono::milliseconds(20)));
+
+        // Allow same-tick sensor polling offset (< 8 ms), block cross-frame pairing (~33 ms)
 
         sync_->registerCallback(std::bind(
             &CameraSubscriber::stereo_callback,
@@ -153,10 +180,28 @@ public:
     // Members and internal functions due to event of subscripton
     // ================================================================
 private:
+    std::atomic<bool> is_cam_processing_{false};
     void stereo_callback( // introductiong threads for parallal exectution between: pinholeXYZ and line_detection
         const sensor_msgs::msg::Image::ConstSharedPtr msg_left,
         const sensor_msgs::msg::Image::ConstSharedPtr msg_right)
     {
+        // Drop incoming pair if the previous frame is still computing
+        if (is_cam_processing_.exchange(true))
+        {
+            return;
+        }
+        // RAII guard: guarantees is_processing_ resets to false even on early returns
+        struct Guard
+        {
+            std::atomic<bool> &flag;
+            ~Guard() { flag.store(false); }
+        } guard{is_cam_processing_};
+
+        // DEBUG
+        double dt_ms = std::abs(
+                           (rclcpp::Time(msg_left->header.stamp) - rclcpp::Time(msg_right->header.stamp)).nanoseconds()) *
+                       1e-6;
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Stereo sync delta: %.3f ms", dt_ms);
 
         // 1. Get the camera measurement timestamp
         const rclcpp::Time image_stamp(
@@ -414,6 +459,8 @@ private:
                 }
             }
 
+            showExtractedWhitePixels(white_line_imgL);
+
             // Optional: Visual debug windows
             // cv::imshow("Original Frame", image_bgr8);
             // cv::imshow("White Lane Mask", mask);
@@ -466,85 +513,145 @@ private:
             std::cout << "dinamically caluclated road witdh is: " << laneW << std::endl;
             // ======== ======== ======== ======== ======== ========
 
+            // ============== ROAD PARAMS ================= ======== ========
+
+            // 1. Convert the existing CV_32FC3 point cloud to CV_64FC3 for detectRoad()
+            cv::Mat_<cv::Vec3d> XYZ_cam;
+            point_cloud_3D_.convertTo(XYZ_cam, CV_64FC3);
+
+            // 2. Declare an EMPTY RoadPlane object
+            RoadPlane dynamic_road_plane;
+
+            // 3. INVOKE THE FUNCTION: We pass dynamic_road_plane into detectRoad.
+            // Because it is passed by reference, the RANSAC loop inside detectRoad
+            // actively fills dynamic_road_plane with the A, B, C, and D values.
+            bool road_found = detectRoad(dynamic_road_plane, XYZ_cam);
+
+            // Apply a smoothing factor (alpha between 0.1 and 0.2 works best for 30Hz)
+            double alpha = 0.05;
+            // Create a temporary RoadPlane structure using the smoothed values
+            RoadPlane final_plane;
+            if (road_found)
+            {
+                smoothed_plane_.A = (1.0 - alpha) * smoothed_plane_.A + alpha * dynamic_road_plane.normal[0];
+                smoothed_plane_.B = (1.0 - alpha) * smoothed_plane_.B + alpha * dynamic_road_plane.normal[1];
+                smoothed_plane_.C = (1.0 - alpha) * smoothed_plane_.C + alpha * dynamic_road_plane.normal[2];
+                smoothed_plane_.D = (1.0 - alpha) * smoothed_plane_.D + alpha * dynamic_road_plane.d;
+
+                const auto &n = dynamic_road_plane.normal;
+                const bool valid =
+                    std::isfinite(n[0]) && std::isfinite(n[1]) &&
+                    std::isfinite(n[2]) && std::isfinite(dynamic_road_plane.d);
+
+                final_plane.normal = cv::Vec3d(smoothed_plane_.A, smoothed_plane_.B, smoothed_plane_.C);
+                final_plane.d = smoothed_plane_.D;
+            }
+            else
+            {
+                final_plane.normal = cv::Vec3d(smoothed_plane_.A, smoothed_plane_.B, smoothed_plane_.C);
+                final_plane.d = smoothed_plane_.D;
+            }
+
             /*
 
-            // ==================== obstacle detection params =================
+   // ==================== obstacle detection params =================
 
-        // Convert the existing CV_32FC3 point cloud to CV_64FC3
-        // for detectRoad() and detectObstacles().
-        cv::Mat_<cv::Vec3d> XYZ_cam;
-        point_cloud_3D_.convertTo(XYZ_cam, CV_64FC3);
+// Convert the existing CV_32FC3 point cloud to CV_64FC3
+// for detectRoad() and detectObstacles().
+cv::Mat_<cv::Vec3d> XYZ_cam;
+point_cloud_3D_.convertTo(XYZ_cam, CV_64FC3);
 
-        if (detectRoad(road_plane_, XYZ_cam))
-        {
-            // ========== DETECT OBSTACLES ==========
+if (detectRoad(road_plane_, XYZ_cam))
+{
+   // ========== DETECT OBSTACLES ==========
 
-            detectObstacles(
-                XYZ_cam,
-                road_plane_,
-                obstacleTreshold_,
-                heightMap_,
-                ObstacleMask,
-                upDirecton);
+   detectObstacles(
+       XYZ_cam,
+       road_plane_,
+       obstacleTreshold_,
+       heightMap_,
+       ObstacleMask,
+       upDirecton);
 
-            // ========== CREATE INDEPENDENT COPIES ==========
+   // ========== CREATE INDEPENDENT COPIES ==========
 
-            cv::Mat rawImage = image_bgr8.clone(); // deep copy
-            filteredImage_ = image_bgr8.clone();
+   cv::Mat rawImage = image_bgr8.clone(); // deep copy
+   filteredImage_ = image_bgr8.clone();
 
-            cv::Mat1b filteredMask = ObstacleMask.clone();
+   cv::Mat1b filteredMask = ObstacleMask.clone();
 
-            // ========== RAW OBSTACLE DETECTION ==========
+   // ========== RAW OBSTACLE DETECTION ==========
 
-            drawDetectedObstacles(
-                ObstacleMask,
-                rawImage);
+   drawDetectedObstacles(
+       ObstacleMask,
+       rawImage);
 
-            // ========== FILTER OBSTACLES TO LANE ==========
+   // ========== FILTER OBSTACLES TO LANE ==========
 
-            filterObstaclesToLane(
-                XYZ_cam,
-                filteredMask,
-                whiteCurveParams,
-                laneW);
+   filterObstaclesToLane(
+       XYZ_cam,
+       filteredMask,
+       whiteCurveParams,
+       laneW);
 
-            // Draw bounding boxes using the filtered mask
-            drawDetectedObstacles(
-                filteredMask,
-                filteredImage_);
+   // Draw bounding boxes using the filtered mask
+   drawDetectedObstacles(
+       filteredMask,
+       filteredImage_);
 
-            // ========== DISPLAY BOTH RESULTS ==========
+   // ========== DISPLAY BOTH RESULTS ==========
 
-            cv::imshow("Detected Obstacles", rawImage);
-            cv::imshow("Detected Obstacles in Lane", filteredImage_);
-            cv::imshow("Raw Mask", ObstacleMask);
-            cv::imshow("Filtered Mask", filteredMask);
+   cv::imshow("Detected Obstacles", rawImage);
+   cv::imshow("Detected Obstacles in Lane", filteredImage_);
+   cv::imshow("Raw Mask", ObstacleMask);
+   cv::imshow("Filtered Mask", filteredMask);
 
-            cv::waitKey(1);
-        }
+   cv::waitKey(1);
+}
 
-        else
-        {
-            RCLCPP_WARN(this->get_logger(), "Road plane not detected for this frame.");
-        }
+else
+{
+   RCLCPP_WARN(this->get_logger(), "Road plane not detected for this frame.");
+}
 
 
 
-            */
+   */
 
             // ONLY draw if the polynomial was successfully solved
             if (whiteCurveParams.isValid)
             {
+                DepthRange lane_depths = extractLaneDepthRange(white_line_pts, point_cloud_3D_);
+
                 // DEBUG
                 std::cout << "whiteCurveParams is valid" << std::endl;
                 DesiredTrajectory new_trajectory = drawDesiredTrajectoryOnImage(
                     image_bgr8,
                     whiteCurveParams.a2, whiteCurveParams.a1, whiteCurveParams.a0,
-                    Y_ground,
+                    final_plane,                   // using alpha for low pass filter
                     laneW,                         //  lane width: 1st iteration: hardcoded, then calibrated
                     whiteCurveParams.is_left_lane, // Automatically determined!
                     camera_params_,
-                    whiteCurveParams);
+                    whiteCurveParams,
+                    lane_depths.max_z); // <--- CLAMPS TO ACTUAL DETECTED DATA
+
+                // ================= COLLECT RAW WHITE 3D POINTS =================
+                std::vector<cv::Vec3f> raw_white_3d;
+                for (const auto &pt : white_line_pts) // white_line_pts from your pixel extraction loop
+                {
+                    if (pt.x >= 0 && pt.x < point_cloud_3D_.cols && pt.y >= 0 && pt.y < point_cloud_3D_.rows)
+                    {
+                        cv::Vec3f p3d = point_cloud_3D_.at<cv::Vec3f>(pt.y, pt.x);
+                        // Ensure valid metric depth
+                        if (std::isfinite(p3d[2]) && p3d[2] > 0.0 && p3d[2] <= 25.0)
+                        {
+                            raw_white_3d.push_back(p3d);
+                        }
+                    }
+                }
+
+                // Pass the raw points into the BEV visualizer
+                BirdEyeViewVisualizer::draw(new_trajectory, whiteCurveParams.a2, whiteCurveParams.a1, whiteCurveParams.a0, raw_white_3d, lane_depths.max_z);
 
                 // ============= PERFOMING TRANSFROMATION (CAM2ENU) DUE TO CLOSELY REALATED TIMESTAMP OF SENSOR =======
 
@@ -604,6 +711,10 @@ private:
                 cv::imshow("Desired Lane Trajectory", image_bgr8);
                 cv::waitKey(1); // Refresh window TODO!
             }
+            if (!road_found)
+            {
+                RCLCPP_WARN(this->get_logger(), "Road plane not detected. Skipping trajectory projection for this frame to prevent jitter.");
+            }
         }
         catch (const cv_bridge::Exception &e)
         {
@@ -629,9 +740,17 @@ private:
     message_filters::Subscriber<sensor_msgs::msg::Image> sub_left_;  // left image subsripton
     message_filters::Subscriber<sensor_msgs::msg::Image> sub_right_; // right image subscirpton
 
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::Image, sensor_msgs::msg::Image> SyncPolicy;
-    std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
+    using ApproxSyncPolicy_ = message_filters::sync_policies::ApproximateTime<
+        sensor_msgs::msg::Image,
+        sensor_msgs::msg::Image>;
+    std::shared_ptr<message_filters::Synchronizer<ApproxSyncPolicy_>> sync_;
 
+    /*
+    using ExactSyncPolicy = message_filters::sync_policies::ExactTime<
+        sensor_msgs::msg::Image,
+        sensor_msgs::msg::Image>;
+    std::shared_ptr<message_filters::Synchronizer<ExactSyncPolicy>> sync_;
+*/
     cv::Ptr<cv::StereoSGBM> stereo_;
 
     cv::Mat image_bgr8; // if i dont denote subscript i corresponds to left image. Left Camere is refenrece in computation logics
@@ -642,7 +761,7 @@ private:
     CameraParams camera_params_;
     CamType::Transform4x4_Cam2Body T_cam2body_;
     double laneW = 12;
-    double Y_ground = 1.65; // hardcoded, but in real scenrio it depensd how i mount tha camera onto the vehicle
+    double Y_ground = 1.05; // hardcoded, but in real scenrio it depensd how i mount tha camera onto the vehicle
 
     // =========================== CALLBACK GROUPS ============================
     // Callback groups

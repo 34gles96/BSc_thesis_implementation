@@ -10,12 +10,18 @@
 DesiredTrajectory drawDesiredTrajectoryOnImage(
     cv::Mat &original_bgr_frame,
     double a2, double a1, double a0, // Polynomial coeffs: X(Z) = a2*Z^2 + a1*Z + a0
-    double road_height_y,            // Camera height relative to road (in camera frame, Y is down)
+    const RoadPlane &road_plane,     // Camera height relative to road (in camera frame, Y is down)
     double &lane_width,              // e.g., 3.5 meters
     bool is_left_lane,               // true if left line, false if right line
     const CameraParams &cam,
-    struct LanePolynomial lanepoly)
+    struct LanePolynomial lanepoly,
+    double max_detected_z)
 {
+
+    if (lane_width < 9)
+    {
+        lane_width = 12;
+    }
 
     // for return type
     DesiredTrajectory result;
@@ -29,12 +35,31 @@ DesiredTrajectory drawDesiredTrajectoryOnImage(
     std::vector<cv::Point> trajectory_2d_pixels;
 
     // Evaluate depths from 3 meters out to 25 meters ahead
-    for (double Z = config::MIN_TRAJECTORY_Z; Z <= config::PREDICTED_HORIZON; Z += 0.5)
+    // --- 2. Clamp the effective horizon to never exceed real data ---
+    double max_allowed_horizon = 10.0; // <-- SET YOUR DESIRED MAX LENGTH IN METERS HERE (e.g., 8m or 10m)
+
+    double effective_horizon = std::min({static_cast<double>(config::PREDICTED_HORIZON),
+                                         max_detected_z,
+                                         max_allowed_horizon});
+    double effective_min_trajectory = std::min(effective_horizon, config::MIN_TRAJECTORY_Z);
+    for (double Z = effective_min_trajectory; Z <= effective_horizon; Z += 0.5)
     {
 
         // 1. Calculate 3D position on the detected lane line
         double X_line = a2 * Z * Z + a1 * Z + a0;
-        double Y_line = road_height_y; // Road plane level
+
+        // <-- CHANGED: DYNAMIC Y CALCULATION --> // Camera position froum ground in camera frame
+        // Solve AX + BY + CZ + D = 0 for Y
+        double A = road_plane.normal[0];
+        double B = road_plane.normal[1];
+        double C = road_plane.normal[2];
+        double D = road_plane.d;
+
+        // Prevent division by zero if the plane is perfectly vertical (should be caught by your RANSAC, but good for safety)
+        if (std::abs(B) < 1e-6)
+            B = -1.0;
+
+        double Y_line = (-A * X_line - C * Z - D) / B;
 
         // ============================== // CALCULATE ROAD WIDTH // ===============================================
 

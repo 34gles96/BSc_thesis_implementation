@@ -65,6 +65,8 @@ add_executable(subscriber_rx
   src/readConfig.cpp
   src/initializeCameraMounting.cpp
   src/obstacleDetect.cpp
+  src/roadBoundary.cpp
+  src/roadLineValidator.cpp
 )
 
 target_include_directories(subscriber_rx PRIVATE
