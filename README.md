@@ -37,7 +37,6 @@ The software stack processes raw stereo camera feeds and noisy vehicle telemetry
   * `yaml-cpp` (for parsing runtime configuration files)
 
 ---
-
 ## Architecture Pipeline
 
 ```text
@@ -48,3 +47,17 @@ The software stack processes raw stereo camera feeds and noisy vehicle telemetry
    └── GNSS / IMU / Wheel Encoders ──► [EKF Node (MATLAB Coder C++)] ──► Estimated Vehicle State
                                                                                 │
    [Vehicle Actuators] ◄── Steering / Throttle ◄── [MPC Controller Node (MATLAB Coder C++)]
+```
+
+### Images from real-world scenarios and from simulator
+
+Obstacle detection via machine vision
+<img width="573" height="346" alt="image" src="https://github.com/user-attachments/assets/467ee964-af09-46ac-86f1-41fec98a7194" />
+
+<img width="1048" height="590" alt="image" src="https://github.com/user-attachments/assets/6b968bea-ffee-4d5a-bc38-8917e1de62fb" />
+
+<img width="998" height="589" alt="image" src="https://github.com/user-attachments/assets/8b8034f8-ad2d-47b7-84f0-5614583c0f35" />
+
+### Image of Software architecture design
+
+<img width="793" height="593" alt="image" src="https://github.com/user-attachments/assets/8616275a-380e-44ed-a303-ff67bb348f5f" />
