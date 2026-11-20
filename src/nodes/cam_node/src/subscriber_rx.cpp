@@ -154,12 +154,13 @@ public:
             std::placeholders::_2));
 
         int minDisparity = 0;
-        int numDisparities = 16 * 10; // 160 disparities
-        int blockSize = 15;           // INCREASED: A large block size (15x15) grabs more road texture
+        int numDisparities = 16 * 16; // 160 disparities
+        int blockSize = 9;            // INCREASED: A large block size (15x15) grabs more road texture
 
         stereo_ = cv::StereoSGBM::create(
             0,
-            16 * 8,
+            // 16 * 8,
+            numDisparities, // it constraints the Z_min (depth), minimum measurable depth Z_min is 2.23m
             5,
             8 * 3 * 5 * 5,
             32 * 3 * 5 * 5,
@@ -169,6 +170,42 @@ public:
             50,
             2,
             cv::StereoSGBM::MODE_SGBM_3WAY);
+
+        /*
+                stereo_ = cv::StereoSGBM::create(
+                    minDisparity,
+                    numDisparities,
+                    blockSize,
+                    8 * 3 * blockSize * blockSize,
+                    32 * 3 * blockSize * blockSize,
+                    1,
+                    63,
+                    10,
+                    50,
+                    2,
+                    cv::StereoSGBM::MODE_SGBM_3WAY);
+        */
+
+        config::updateTrajectoryBounds(
+            camera_params_,
+            numDisparities,
+            smoothed_plane_.D);
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Updated trajectory bounds: MIN_TRAJECTORY_Z = %.2f m, PREDICTED_HORIZON = %.2f m",
+            config::MIN_TRAJECTORY_Z,
+            config::PREDICTED_HORIZON);
+        if (!std::isfinite(config::MIN_TRAJECTORY_Z) ||
+            !std::isfinite(config::PREDICTED_HORIZON) ||
+            config::PREDICTED_HORIZON <= config::MIN_TRAJECTORY_Z)
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "Invalid trajectory depth range: min=%.2f, horizon=%.2f",
+                config::MIN_TRAJECTORY_Z,
+                config::PREDICTED_HORIZON);
+        }
     }
 
     ~CameraSubscriber()
@@ -296,6 +333,11 @@ private:
                                "bgr8")
                                ->image;
 
+            // ========= DEBUG ======
+            // Refresh with the current camera frame even if later processing rejects it.
+            // cv::imshow("Desired Lane Trajectory", image_bgr8);
+            // cv::waitKey(1);
+            // ===============
             using Clock_debug = std::chrono::steady_clock; // for timstamp measuring using cpu ticks in std::milli resolution storered in double tpye
             std::exception_ptr stereo_exception;           // for proagation exception from child thread in ordr to not call std::termiante() when exception occured in child thread
             cv::Mat output_cloud;                          // stadlon resources of child thread output
@@ -367,8 +409,13 @@ private:
             // cv::Scalar lower_white(0, 0, 230);
             // cv::Scalar upper_white(180, 50, 255);
             // Require higher brightness and a slightly stricter filter
+
+            cv::Scalar lower_white(0, 0, 200);
+            cv::Scalar upper_white(180, 50, 255);
+            /*
             cv::Scalar lower_white(0, 0, 240);
             cv::Scalar upper_white(180, 30, 255);
+            */
 
             //  Create a binary mask (white lines become pure white 255, everything else black 0)
             cv::Mat mask;
@@ -507,8 +554,19 @@ private:
                 stereo_ms,
                 parallel_ms);
 
-            struct LanePolynomial whiteCurveParams = fitLanePolynomialOpenCV(white_line_imgL, point_cloud_3D_, laneW);
+            RoadPlane plane_for_lane_fit_tmp;
 
+            plane_for_lane_fit_tmp.normal = cv::Vec3d(
+                smoothed_plane_.A,
+                smoothed_plane_.B,
+                smoothed_plane_.C);
+
+            plane_for_lane_fit_tmp.d = smoothed_plane_.D;
+
+            std::vector<LanePolynomial> whiteCurveParams =
+                fitLanePolynomialOpenCV(white_line_imgL, point_cloud_3D_, laneW, camera_params_, plane_for_lane_fit_tmp);
+
+            // Use params_for_use for drawing/processing.
             // ============== DEBUG ================= ======== ========
             std::cout << "dinamically caluclated road witdh is: " << laneW << std::endl;
             // ======== ======== ======== ======== ======== ========
@@ -531,17 +589,28 @@ private:
             double alpha = 0.05;
             // Create a temporary RoadPlane structure using the smoothed values
             RoadPlane final_plane;
-            if (road_found)
+
+            const auto &raw_n = dynamic_road_plane.normal;
+            const double norm = cv::norm(raw_n);
+            if (road_found && std::isfinite(norm) && norm > 1e-6 &&
+                std::isfinite(dynamic_road_plane.d))
             {
+
+                cv::Vec3d n = raw_n / norm;
+                double d = dynamic_road_plane.d / norm;
+                const cv::Vec3d previous(smoothed_plane_.A,
+                                         smoothed_plane_.B,
+                                         smoothed_plane_.C);
+
+                if (n.dot(previous) < 0.0) // bcs we can describe the road w 2 diff sign convention, and diff frame produce diff math exőression
+                {
+                    n = -n;
+                    d = -d;
+                }
                 smoothed_plane_.A = (1.0 - alpha) * smoothed_plane_.A + alpha * dynamic_road_plane.normal[0];
                 smoothed_plane_.B = (1.0 - alpha) * smoothed_plane_.B + alpha * dynamic_road_plane.normal[1];
                 smoothed_plane_.C = (1.0 - alpha) * smoothed_plane_.C + alpha * dynamic_road_plane.normal[2];
                 smoothed_plane_.D = (1.0 - alpha) * smoothed_plane_.D + alpha * dynamic_road_plane.d;
-
-                const auto &n = dynamic_road_plane.normal;
-                const bool valid =
-                    std::isfinite(n[0]) && std::isfinite(n[1]) &&
-                    std::isfinite(n[2]) && std::isfinite(dynamic_road_plane.d);
 
                 final_plane.normal = cv::Vec3d(smoothed_plane_.A, smoothed_plane_.B, smoothed_plane_.C);
                 final_plane.d = smoothed_plane_.D;
@@ -618,22 +687,36 @@ else
 
    */
 
-            // ONLY draw if the polynomial was successfully solved
-            if (whiteCurveParams.isValid)
+            if (!whiteCurveParams.empty() && whiteCurveParams[0].isValid)
+            {
+                // Existing trajectory generation, visualization, and publishing code.
+
+                // Refresh again so the successful frame shows the trajectory overlay.
+                cv::imshow("Desired Lane Trajectory", image_bgr8);
+                cv::waitKey(1);
+            }
+            else
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Lane fit rejected; displaying the camera frame without a trajectory.");
+            }
+
+            // ONLY draw if the polynomial was successfully solved or buffered
+            if (whiteCurveParams[0].isValid)
             {
                 DepthRange lane_depths = extractLaneDepthRange(white_line_pts, point_cloud_3D_);
 
                 // DEBUG
                 std::cout << "whiteCurveParams is valid" << std::endl;
+
                 DesiredTrajectory new_trajectory = drawDesiredTrajectoryOnImage(
                     image_bgr8,
-                    whiteCurveParams.a2, whiteCurveParams.a1, whiteCurveParams.a0,
-                    final_plane,                   // using alpha for low pass filter
-                    laneW,                         //  lane width: 1st iteration: hardcoded, then calibrated
-                    whiteCurveParams.is_left_lane, // Automatically determined!
+                    final_plane, // using alpha for low pass filter
+                    laneW,       //  lane width: 1st iteration: hardcoded, then calibrated
                     camera_params_,
                     whiteCurveParams,
-                    lane_depths.max_z); // <--- CLAMPS TO ACTUAL DETECTED DATA
+                    lane_depths.max_z); // <--- CLAMPS TO ACTUAL DETECTED DATA NOTE: this is note used..
 
                 // ================= COLLECT RAW WHITE 3D POINTS =================
                 std::vector<cv::Vec3f> raw_white_3d;
@@ -651,7 +734,7 @@ else
                 }
 
                 // Pass the raw points into the BEV visualizer
-                BirdEyeViewVisualizer::draw(new_trajectory, whiteCurveParams.a2, whiteCurveParams.a1, whiteCurveParams.a0, raw_white_3d, lane_depths.max_z);
+                BirdEyeViewVisualizer::draw(new_trajectory, whiteCurveParams[0].a2, whiteCurveParams[0].a1, whiteCurveParams[0].a0, raw_white_3d, lane_depths.max_z);
 
                 // ============= PERFOMING TRANSFROMATION (CAM2ENU) DUE TO CLOSELY REALATED TIMESTAMP OF SENSOR =======
 
@@ -762,6 +845,11 @@ else
     CamType::Transform4x4_Cam2Body T_cam2body_;
     double laneW = 12;
     double Y_ground = 1.05; // hardcoded, but in real scenrio it depensd how i mount tha camera onto the vehicle
+
+    // ================== CATCHED TRAJECTORY =========================
+    std::vector<LanePolynomial> whiteCurveParams_prev; //  buffer for lastly valid polyfitting datas
+
+    // ================================================
 
     // =========================== CALLBACK GROUPS ============================
     // Callback groups

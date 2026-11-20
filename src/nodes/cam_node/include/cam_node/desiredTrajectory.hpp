@@ -24,12 +24,9 @@ struct DesiredTrajectory
 
 // Draw trajectory and lane line on the original image frame
 DesiredTrajectory drawDesiredTrajectoryOnImage(
-
     cv::Mat &original_bgr_frame,
-    double a2, double a1, double a0, // Polynomial coeffs: X(Z) = a2*Z^2 + a1*Z + a0
-    const RoadPlane &road_plane,     // Camera height relative to road (in camera frame, Y is down)
-    double &lane_width,              // e.g., 3.5 meters
-    bool is_left_lane,               // true if left line, false if right line
+    const RoadPlane &road_plane, // Camera height relative to road (in camera frame, Y is down)
+    double &lane_width,          // e.g., 3.5 meters
     const CameraParams &cam,
-    struct LanePolynomial lanepoly,
+    const std::vector<LanePolynomial> &lanepoly_vec, // contains  Polynomial coeffs: X(Z) = a2*Z^2 + a1*Z + a0 for best and 2ndBest selected road boandary
     double max_detected_z);

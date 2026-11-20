@@ -5,7 +5,10 @@
 #include <map>
 #include <vector>
 #include <cmath>
+#include <iostream>
 #include <numeric>
+#include "readConfig.hpp"
+#include "detectObstacles.hpp"
 
 std::vector<cv::Point2d> extractRepresentativePoints(
     const cv::Mat &whiteLineXYZ,
@@ -66,11 +69,31 @@ std::vector<cv::Point2d> extractRepresentativePoints(
     return XZ;
 }
 
+/*
 std::vector<double> secondOrderPolyFitting(
     const std::vector<cv::Point2d> &XZ)
 {
     if (XZ.size() < 3)
         return {};
+
+    // ============================================================
+    // 1. Determine the depth interval of the representative points
+    // ============================================================
+
+    double minZ = XZ.front().x;
+    double maxZ = XZ.front().x;
+
+    for (const cv::Point2d &point : XZ)
+    {
+        const double Z = point.x;
+        const double X = point.y;
+
+        if (!std::isfinite(Z) || !std::isfinite(X))
+            return {};
+
+        minZ = std::min(minZ, Z);
+        maxZ = std::max(maxZ, Z);
+    }
 
     cv::Mat A(static_cast<int>(XZ.size()), 3, CV_64F);
     cv::Mat B(static_cast<int>(XZ.size()), 1, CV_64F);
@@ -103,4 +126,127 @@ std::vector<double> secondOrderPolyFitting(
         coeffs.at<double>(1, 0), // a1
         coeffs.at<double>(2, 0)  // a0
     };
+}*/
+
+std::vector<double> secondOrderPolyFitting(
+    const std::vector<cv::Point2d> &XZ)
+{
+    if (XZ.size() < 3)
+        return {};
+
+    // ============================================================
+    // 1. Determine the depth interval of the representative points
+    // ============================================================
+
+    double minZ = XZ.front().x;
+    double maxZ = XZ.front().x;
+
+    for (const cv::Point2d &point : XZ)
+    {
+        const double Z = point.x;
+        const double X = point.y;
+
+        if (!std::isfinite(Z) || !std::isfinite(X))
+            return {};
+
+        minZ = std::min(minZ, Z);
+        maxZ = std::max(maxZ, Z);
+    }
+
+    const double span = maxZ - minZ;
+    if (span < 0.75)
+    { // small depth span -> too little curvature signal
+        std::cerr << "small depth span -> too little curvature signal"
+                  << XZ.size() << '\n';
+        return {};
+    }
+    // ============================================================
+    // 2. Calculate normalization parameters
+    // ============================================================
+
+    const double Zc = 0.5 * (maxZ + minZ);
+    const double L = 0.5 * (maxZ - minZ);
+
+    if (!std::isfinite(Zc) ||
+        !std::isfinite(L) ||
+        L < 1e-9)
+    {
+        return {};
+    }
+
+    // ============================================================
+    // 3. Construct normalized least-squares system
+    //
+    // X(s) = b2*s^2 + b1*s + b0
+    //
+    // s = (Z - Zc) / L
+    // ============================================================
+
+    cv::Mat A(static_cast<int>(XZ.size()), 3, CV_64F);
+    cv::Mat B(static_cast<int>(XZ.size()), 1, CV_64F);
+
+    int i = 0;
+
+    for (const cv::Point2d &point : XZ)
+    {
+        const double Z = point.x;
+        const double X = point.y;
+
+        const double s = (Z - Zc) / L;
+
+        A.at<double>(i, 0) = s * s;
+        A.at<double>(i, 1) = s;
+        A.at<double>(i, 2) = 1.0;
+
+        B.at<double>(i, 0) = X;
+
+        ++i;
+    }
+
+    // ============================================================
+    // 4. Solve the normalized least-squares problem
+    // ============================================================
+
+    cv::Mat coeffs;
+
+    const bool success =
+        cv::solve(A, B, coeffs, cv::DECOMP_SVD);
+
+    if (!success || coeffs.rows != 3)
+        return {};
+
+    const double b2 = coeffs.at<double>(0, 0);
+    const double b1 = coeffs.at<double>(1, 0);
+    const double b0 = coeffs.at<double>(2, 0);
+
+    if (!std::isfinite(b2) ||
+        !std::isfinite(b1) ||
+        !std::isfinite(b0))
+    {
+        return {};
+    }
+
+    // ============================================================
+    // 5. Convert normalized coefficients back to original Z
+    //
+    // X(Z) = a2*Z^2 + a1*Z + a0
+    // ============================================================
+
+    const double a2 = b2 / (L * L);
+
+    const double a1 =
+        b1 / L - (2.0 * b2 * Zc) / (L * L);
+
+    const double a0 =
+        b0 - (b1 * Zc) / L + (b2 * Zc * Zc) / (L * L);
+
+    if (!std::isfinite(a2) ||
+        !std::isfinite(a1) ||
+        !std::isfinite(a0))
+    {
+        return {};
+    }
+
+    // Return coefficients in the original polynomial form
+    return {a2, a1, a0};
 }

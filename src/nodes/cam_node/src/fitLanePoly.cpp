@@ -2,17 +2,19 @@
 #include "road_boundary_fitting.hpp"
 #include "config.hpp"
 #include "roadLineValidator.hpp"
+#include "horizontConfig.hpp"
 
 #include <cmath>
 #include <iostream>
 
-const double minDepth = 0.1;
-const double maxDepth = 30.0;
-const double binSize = 0.5;
+const double binSize = 0.1;
 
-LanePolynomial fitLanePolynomialOpenCV(
+std::vector<LanePolynomial> fitLanePolynomialOpenCV(
     const cv::Mat &uvIMG, const cv::Mat &XYZ_IMG, double &road_width) // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
 {
+
+    std::vector<LanePolynomial> result_2_bounday_road_line;
+    result_2_bounday_road_line.reserve(2);
 
     // region of interest for detected left or right lane using for desired trsajectory
     // Vertical ROI limits:
@@ -53,38 +55,64 @@ LanePolynomial fitLanePolynomialOpenCV(
     std::vector<cv::Point> white_line_ptsR;
     std::size_t nb_whitePX_left, nb_whitePX_right;
 
-    // Scan the masked region for LEFT PART
-    for (int y = 0; y < mask_roi_left.rows; ++y)
+    // --- LEFT ROI: scan from road center (cols - 1) outward to left (0) ---
+    for (int v_local = 0; v_local < mask_roi_left.rows; ++v_local)
     {
-        for (int x = 0; x < mask_roi_left.cols; ++x)
+        const uchar *row_ptr = mask_roi_left.ptr<uchar>(v_local);
+        int u_local = mask_roi_left.cols - 1;
+
+        // 1. Skip white pixels sitting right on the center split
+        while (u_local >= 0 && row_ptr[u_local] == 255)
+            --u_local;
+
+        // 2. Cross black asphalt until rising edge (0 -> 255)
+        while (u_local >= 0 && row_ptr[u_local] == 0)
+            --u_local;
+
+        // 3. Collect white run until falling edge (255 -> 0)
+        std::vector<cv::Point> row_candidates;
+        while (u_local >= 0 && row_ptr[u_local] == 255)
         {
-            // If the pixel is white (255)
-            if (mask_roi_left.at<uchar>(y, x) == 255)
-            {
-                // Adjust Y back to the original image ( captured input camera stream)) coordinate frame
-                int original_y = y + roi_area_left.y;
-                int original_x = x + roi_area_left.x;
-                white_line_ptsL.push_back(cv::Point(original_x, original_y));
-            }
+            row_candidates.emplace_back(u_local + roi_area_left.x, v_local + roi_area_left.y);
+            --u_local;
+        }
+
+        // Keep only thin painted road lines (2..30 px), reject wide concrete barriers
+        if (row_candidates.size() >= 2 && row_candidates.size() <= 30)
+        {
+            white_line_ptsL.insert(white_line_ptsL.end(), row_candidates.begin(), row_candidates.end());
         }
     }
 
-    nb_whitePX_left = white_line_ptsL.size();
-    // Scan the masked region for RIGHT PART
-    for (int y = 0; y < mask_roi_right.rows; ++y)
+    // --- RIGHT ROI: scan from road center (0) outward to right (cols - 1) ---
+    for (int v_local = 0; v_local < mask_roi_right.rows; ++v_local)
     {
-        for (int x = 0; x < mask_roi_right.cols; ++x)
+        const uchar *row_ptr = mask_roi_right.ptr<uchar>(v_local);
+        int u_local = 0;
+
+        // 1. Skip white pixels sitting right on the center split
+        while (u_local < mask_roi_right.cols && row_ptr[u_local] == 255)
+            ++u_local;
+
+        // 2. Cross black asphalt until rising edge (0 -> 255)
+        while (u_local < mask_roi_right.cols && row_ptr[u_local] == 0)
+            ++u_local;
+
+        // 3. Collect white run until falling edge (255 -> 0)
+        std::vector<cv::Point> row_candidates;
+        while (u_local < mask_roi_right.cols && row_ptr[u_local] == 255)
         {
-            // If the pixel is white (255)
-            if (mask_roi_right.at<uchar>(y, x) == 255)
-            {
-                // Adjust Y back to the original image ( captured input camera stream)) coordinate frame
-                int original_y = y + roi_area_right.y;
-                int original_x = x + roi_area_right.x;
-                white_line_ptsR.push_back(cv::Point(original_x, original_y));
-            }
+            row_candidates.emplace_back(u_local + roi_area_right.x, v_local + roi_area_right.y);
+            ++u_local;
+        }
+
+        // Keep only thin painted road lines (2..30 px), reject wide concrete barriers
+        if (row_candidates.size() >= 2 && row_candidates.size() <= 30)
+        {
+            white_line_ptsR.insert(white_line_ptsR.end(), row_candidates.begin(), row_candidates.end());
         }
     }
+    nb_whitePX_left = white_line_ptsL.size();
     nb_whitePX_right = white_line_ptsR.size();
     //*******//*******//*******//*******//*******//*******//*******//*******//******* */
     // =======================================================================
@@ -96,25 +124,29 @@ LanePolynomial fitLanePolynomialOpenCV(
 
     const bool leftValid = isValidRoadLine(
         XYZ_IMG, white_line_ptsL,
-        minDepth, maxDepth, binSize,
+        config::MIN_TRAJECTORY_Z, config::PREDICTED_HORIZON, binSize,
         maxAllowedWidth, minValidBinRatio);
 
-    const bool rightValid = isValidRoadLine(
+    const bool rightValid = isValidRoadLine( // checkiking road width
         XYZ_IMG, white_line_ptsR,
-        minDepth, maxDepth, binSize,
+        config::MIN_TRAJECTORY_Z, config::PREDICTED_HORIZON, binSize,
         maxAllowedWidth, minValidBinRatio);
-
-    // =======================================================================
-    // SELECT THE ROAD LINE
-    // =======================================================================
 
     bool use_left_lane;
+    // const bool leftValid = true;
+    // const bool rightValid = true;
+    //  =======================================================================
+    //  SELECT THE REFERENCE ROAD LINE
+    //  =======================================================================
+
+    if (!leftValid && !rightValid)
+    {
+        std::cerr << "Skipping lane fit: neither lane passed validation\n";
+        return {LanePolynomial{}, LanePolynomial{}};
+    }
 
     if (leftValid && rightValid)
     {
-        // Both candidates are valid: select the one with more white pixels
-        use_left_lane =
-            white_line_ptsL.size() >= white_line_ptsR.size();
     }
     else if (leftValid)
     {
@@ -124,47 +156,137 @@ LanePolynomial fitLanePolynomialOpenCV(
     {
         use_left_lane = false;
     }
-    else
-    {
-        use_left_lane =
-            !(white_line_ptsL.size() >= white_line_ptsR.size()); // less white pixel is more accuray here..
-    }
 
     const std::vector<cv::Point> &selected_lane =
         use_left_lane ? white_line_ptsL : white_line_ptsR;
+    double Nb_px_selected_lane_ref = selected_lane.size();
 
-    // const std::vector<cv::Point> &selected_lane_2ndBest_lane = !(use_left_lane) ? white_line_ptsL : white_line_ptsR;
+    const std::vector<cv::Point> &selected_lane_2ndBest_lane = !(use_left_lane) ? white_line_ptsL : white_line_ptsR;
+
+    // ======== design the min trajector due to Z .================
+    /*
+
+        std::vector<double> valid_depths;
+        valid_depths.reserve(selected_lane.size());
+
+        constexpr double MAX_DEPTH_CAP = 45.0;
+        constexpr double MIN_DEPTH_CAP = 3.0;
+        double farthest_z = -std::numeric_limits<double>::infinity();
+        for (const auto &pt : selected_lane)
+        {
+            if (pt.x < 0 || pt.x >= XYZ_IMG.cols ||
+                pt.y < 0 || pt.y >= XYZ_IMG.rows)
+                continue;
+
+            const cv::Vec3f xyz = XYZ_IMG.at<cv::Vec3f>(pt.y, pt.x);
+            const float z = xyz[2];
+
+            if (std::isfinite(xyz[0]) && std::isfinite(xyz[1]) &&
+                std::isfinite(z) &&
+                z >= MIN_DEPTH_CAP &&
+                z <= MAX_DEPTH_CAP)
+            {
+                valid_depths.push_back(z);
+                farthest_z = std::max(farthest_z, static_cast<double>(z));
+            }
+        }
+
+        if (valid_depths.size() < 3)
+        {
+            std::cerr << "Not enough valid lane depths: "
+                      << valid_depths.size() << '\n';
+            return {LanePolynomial{}, LanePolynomial{}};
+        }
+
+        // Use the 2.5th percentile to avoid one spuriously near stereo point.
+        // Use min_element instead if you specifically want the closest single point.
+        const std::size_t index_min = (valid_depths.size() - 1) / 99;
+
+        std::nth_element(
+            valid_depths.begin(),
+            valid_depths.begin() + index_min,
+            valid_depths.end());
+
+        config::MIN_TRAJECTORY_Z = static_cast<double>(valid_depths[index_min]);
+
+        double tunning_farthest_z = 0.87;
+        if (std::isfinite(farthest_z))
+        {
+            config::PREDICTED_HORIZON = farthest_z * tunning_farthest_z;
+        }
+            */
+    auto depth_bounds = calculateTrajectoryBoundsFromLane(
+        XYZ_IMG, selected_lane);
+
+    if (!depth_bounds)
+    {
+        return {LanePolynomial{}, LanePolynomial{}};
+    }
+
+    config::MIN_TRAJECTORY_Z = depth_bounds->min_z;
+    config::PREDICTED_HORIZON = depth_bounds->predicted_horizon;
+
+    if (!(std::abs(
+              static_cast<long long>(nb_whitePX_left) -
+              static_cast<long long>(nb_whitePX_right)) > Nb_px_selected_lane_ref * 0.55)) // 30% of ref_lane pixel difference -> 2ndBest lane no valid
+    {
+        auto depth_bounds_2ndBest = calculateTrajectoryBoundsFromLane(
+            XYZ_IMG, selected_lane_2ndBest_lane);
+
+        config::MIN_TRAJECTORY_Z = std::max(depth_bounds_2ndBest->min_z, config::MIN_TRAJECTORY_Z);
+        config::PREDICTED_HORIZON = std::min(depth_bounds->predicted_horizon, config::PREDICTED_HORIZON);
+    }
+
     //*******//*******//*******//*******//*******//*******//*******//*******//******* */
     //  =======================================================================
     //  EXTRACT REPRESENTATIVE POINTS AND FIT SECOND-ORDER POLYNOMIAL
     //  =======================================================================
 
-    int invalidDepth = 0;
-    int validPoints = 0;
-
-    // 1. Extract representative (Z, X) points
+    // 1. Extract representative (Z, X) points : transforming the lateral extension of X-coordinates of road line into 1 line by taking avg
     std::vector<cv::Point2d> XZ =
         extractRepresentativePoints(
             XYZ_IMG,
             selected_lane,
-            minDepth,
-            maxDepth,
+            config::MIN_TRAJECTORY_Z,
+            config::PREDICTED_HORIZON,
             binSize);
+
+    std::vector<cv::Point2d> XZ_2ndBest =
+        extractRepresentativePoints(
+            XYZ_IMG,
+            selected_lane_2ndBest_lane,
+            config::MIN_TRAJECTORY_Z,
+            config::PREDICTED_HORIZON,
+            binSize);
+
+    bool valid_XZ_2ndBest = false;
+    if (XZ_2ndBest.size() >= 3)
+    {
+        valid_XZ_2ndBest = true;
+    }
 
     // 2. Fit the second-order polynomial
     std::cout << "Representative points for polyfit: "
               << XZ.size() << std::endl;
 
-    LanePolynomial result;
+    LanePolynomial result; // initializated w default comstrucotr, boolen expression gets value of false
+    LanePolynomial result_2ndBest;
 
-    if (XZ.size() < 3)
+    constexpr std::size_t min_fit_bins = 5;
+
+    if (XZ.size() < min_fit_bins)
     {
-        std::cerr << "Warning: Not enough representative points!"
-                  << std::endl;
-        return result;
+        std::cerr << "Skipping lane fit: only "
+                  << XZ.size() << " representative bins\n";
+        return {LanePolynomial{}, LanePolynomial{}};
     }
 
     std::vector<double> coeffs = secondOrderPolyFitting(XZ);
+    std::vector<double> coeffs_2ndBest;
+    if (valid_XZ_2ndBest)
+    {
+        coeffs_2ndBest = secondOrderPolyFitting(XZ_2ndBest);
+    }
 
     if (coeffs.size() == 3)
     {
@@ -180,18 +302,33 @@ LanePolynomial fitLanePolynomialOpenCV(
     {
         std::cerr << "Warning: Polynomial fitting failed!"
                   << std::endl;
-        return result;
+        return {result, result_2ndBest}; // doingin implicit intruction of vec.emplace_back();
     }
+
+    if (coeffs_2ndBest.size() == 3)
+    {
+        result_2ndBest.a2 = coeffs_2ndBest[0];
+        result_2ndBest.a1 = coeffs_2ndBest[1];
+        result_2ndBest.a0 = coeffs_2ndBest[2];
+
+        result_2ndBest.isValid = true;
+    }
+
     // =======================================================================
     // CALCULATE ROAD WIDHT
     // =======================================================================
     // extracting white pixels of 2 masks is nearly equal (no distorsion)
+
     if (std::abs(
             static_cast<long long>(nb_whitePX_left) -
-            static_cast<long long>(nb_whitePX_right)) < 500)
+            static_cast<long long>(nb_whitePX_right)) > Nb_px_selected_lane_ref * 0.55) // 30% of ref_lane pixel difference -> 2ndBest lane no valid
     {
-        result.is_road_width_Valid = true;
-        return result;
+        result.is_road_width_Valid = false;
+
+        std::cout << "[Lane PX] Left: " << nb_whitePX_left
+                  << " | Right: " << nb_whitePX_right << std::endl;
+
+        return {result, LanePolynomial()};
     }
     else
     {
@@ -199,69 +336,57 @@ LanePolynomial fitLanePolynomialOpenCV(
         // =======================================================================
         // CALCULATE ROAD WIDTH USING 3D PIXEL EXTRACTION FROM LINES
         // =======================================================================
-        std::vector<cv::Vec3f> left_3d_pts;
-        std::vector<cv::Vec3f> right_3d_pts;
+        // =======================================================================
+        // CALCULATE ROAD WIDTH IN O(N) USING BINNED REPRESENTATIVE POINTS
+        // =======================================================================
+        result.is_road_width_Valid = false;
 
-        // Extract 3D points from left line pixels
-        for (const auto &pt : white_line_ptsL)
+        // Require both polynomials to be valid (at least 3 binned points each)
+        if (result_2ndBest.isValid)
         {
-            if (pt.x >= 0 && pt.x < XYZ_IMG.cols && pt.y >= 0 && pt.y < XYZ_IMG.rows)
+            // Ensure both vectors are sorted by depth Z (stored in .x)
+            auto by_depth = [](const cv::Point2d &a, const cv::Point2d &b)
             {
-                cv::Vec3f pt3d = XYZ_IMG.at<cv::Vec3f>(pt.y, pt.x);
-                if (pt3d[2] > 0.1f && pt3d[2] <= 30.0f)
+                return a.x < b.x;
+            };
+            std::sort(XZ.begin(), XZ.end(), by_depth);
+            std::sort(XZ_2ndBest.begin(), XZ_2ndBest.end(), by_depth);
+
+            double accumulated_width = 0.0;
+            int valid_pairs = 0;
+            const double depth_tolerance = binSize * 0.5; // 0.25m for 0.5m bins
+
+            // Two-pointer linear scan over depth-sorted binned points
+            std::size_t j = 0;
+            for (const auto &pt1 : XZ)
+            {
+                // Advance j until XZ_2ndBest[j].x is within tolerance of pt1.x
+                while (j < XZ_2ndBest.size() && XZ_2ndBest[j].x < pt1.x - depth_tolerance)
                 {
-                    left_3d_pts.push_back(pt3d);
+                    ++j;
                 }
-            }
-        }
 
-        // Extract 3D points from right line pixels
-        for (const auto &pt : white_line_ptsR)
-        {
-            if (pt.x >= 0 && pt.x < XYZ_IMG.cols && pt.y >= 0 && pt.y < XYZ_IMG.rows)
-            {
-                cv::Vec3f pt3d = XYZ_IMG.at<cv::Vec3f>(pt.y, pt.x);
-                if (pt3d[2] > 0.1f && pt3d[2] <= 30.0f)
+                if (j < XZ_2ndBest.size() && std::abs(XZ_2ndBest[j].x - pt1.x) <= depth_tolerance)
                 {
-                    right_3d_pts.push_back(pt3d);
-                }
-            }
-        }
+                    // .y stores lateral X coordinate in meters
+                    double instantaneous_width = std::abs(XZ_2ndBest[j].y - pt1.y);
 
-        double accumulated_width = 0.0;
-        int valid_pairs = 0;
-
-        // Match depths between left and right line points
-        for (const auto &ptL : left_3d_pts)
-        {
-            float z_target = ptL[2];
-            for (const auto &ptR : right_3d_pts)
-            {
-                if (std::abs(ptR[2] - z_target) < 0.1f) // Within 10cm depth match
-                {
-                    double instantaneous_width = std::abs(ptR[0] - ptL[0]);
-
-                    // Filter realistic lane widths (e.g., between 2.0m and 4.5m)
-                    if (instantaneous_width > 2.0 && instantaneous_width < 4.5)
+                    // Filter realistic lane widths (2.0m to 6.0m)
+                    if (instantaneous_width >= 9.0 && instantaneous_width <= 12.0)
                     {
                         accumulated_width += instantaneous_width;
-                        valid_pairs++;
+                        ++valid_pairs;
                     }
-                    break;
                 }
+            }
+
+            if (valid_pairs >= 4)
+            {
+                road_width = accumulated_width / valid_pairs;
+                result.is_road_width_Valid = true;
             }
         }
 
-        if (valid_pairs > 5)
-        {
-            road_width = accumulated_width / valid_pairs;
-            result.is_road_width_Valid = true;
-            return result;
-        }
-        else
-        {
-            result.is_road_width_Valid = false;
-            return result;
-        }
+        return {result, result_2ndBest};
     }
 }

@@ -12,15 +12,6 @@ public:
                      const double predictedHorizont_m = static_cast<double>(config::PREDICTED_HORIZON))
     {
 
-        // Evaluate depths from 3 meters out to 25 meters ahead
-        // --- 2. Clamp the effective horizon to never exceed real data ---
-        double max_allowed_horizon = 10.0; // <-- SET YOUR DESIRED MAX LENGTH IN METERS HERE (e.g., 8m or 10m)
-
-        double effective_horizon = std::min({static_cast<double>(config::PREDICTED_HORIZON),
-                                             predictedHorizont_m,
-                                             max_allowed_horizon});
-        double effective_min_trajectory = std::min(effective_horizon, config::MIN_TRAJECTORY_Z);
-
         // 1. Canvas Configuration
         int width = 600;
         int height = 800;
@@ -34,7 +25,7 @@ public:
         int origin_y = height - 60;
 
         // 2. Draw Distance Grid Lines (Every 2 meters up to detected avaible depth meters ahead)
-        for (double d = config::MIN_TRAJECTORY_Z; d <= effective_horizon; d += 0.5)
+        for (double d = config::MIN_TRAJECTORY_Z; d <= config::PREDICTED_HORIZON; d += 0.25)
         {
             int y_pos = origin_y - static_cast<int>(d * scale);
             cv::line(bev_img, cv::Point(0, y_pos), cv::Point(width, y_pos), cv::Scalar(40, 40, 40), 1);
@@ -71,7 +62,7 @@ public:
         if (a2 != 0.0 || a1 != 0.0 || a0 != 0.0)
         {
             std::vector<cv::Point> lane_pts;
-            for (double Z = config::MIN_TRAJECTORY_Z; Z <= effective_horizon; Z += 0.5)
+            for (double Z = config::MIN_TRAJECTORY_Z; Z <= config::PREDICTED_HORIZON; Z += 0.25)
             {
                 double X = a2 * Z * Z + a1 * Z + a0;
                 int px = origin_x - static_cast<int>(X * scale);

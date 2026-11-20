@@ -1,0 +1,254 @@
+
+%YAML:1.0
+---
+
+image_width: 1920
+image_height: 1080
+
+# ==========================================================
+# STEREO CAMERA INTRINSIC PARAMETERS
+# ==========================================================
+#
+# OpenCV camera optical frame convention:
+#
+#   X = right
+#   Y = down
+#   Z = forward
+#
+# K1, D1: Left camera
+# K2, D2: Right camera
+# ==========================================================
+
+K1: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [
+         1371.0221,    0.0,    960.0,
+            0.0,    1371.0221, 540.0,
+            0.0,       0.0,      1.0
+         ]
+
+
+
+D1: !!opencv-matrix
+   rows: 1
+   cols: 5
+   dt: d
+   data: [ 0.0, 0.0, 0.0, 0.0, 0.0 ]
+
+K2: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ 1371.0221,    0.0,    960.0,
+            0.0,    1371.0221, 540.0,
+            0.0,       0.0,      1.0
+         ]
+
+D2: !!opencv-matrix
+   rows: 1
+   cols: 5
+   dt: d
+   data: [ 0.0, 0.0, 0.0, 0.0, 0.0 ]
+
+
+# ==========================================================
+# STEREO CAMERA EXTRINSIC PARAMETERS
+# ==========================================================
+#
+# IMPORTANT:
+# These R and T matrices use the OpenCV stereo
+# camera optical coordinate convention:
+#
+#   X = right
+#   Y = down
+#   Z = forward
+#
+# NOT the EKF body frame or the BeamNG vehicle frame.
+#
+# OpenCV stereo extrinsic relationship:
+#
+#   p_right = R * p_left + T
+#
+# T = [-0.24, 0, 0] means that the right camera is
+# 0.24 m to the right of the left camera, under
+# this left-to-right coordinate transformation.
+#
+# Do not replace T with the body-frame baseline,
+# because Q and stereo reconstruction depend on it.
+# ==========================================================
+
+R: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ 1.000000, 0.000000, 0.000000,
+           0.000000, 1.000000, 0.000000,
+           0.000000, 0.000000, 1.000000 ]
+
+T: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ -0.24000, 0.00000, 0.00000 ]
+
+
+# Reprojection matrix updated for 1280x720 (-cx, -cy, f)
+Q: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: d
+   data: [ 1.0, 0.0, 0.0, -960.0,
+            0.0, 1.0, 0.0, -540.0,
+            0.0, 0.0, 0.0, 1371.0221,
+            0.0, 0.0, 2.0,    0.0
+         ]
+
+
+# ==========================================================
+# STEREO BASELINE IN EKF BODY COORDINATES
+# ==========================================================
+#
+# EKF body frame convention:
+#
+#   X = forward
+#   Y = left
+#   Z = up
+#
+# Vector from LEFT camera origin to RIGHT camera origin,
+# expressed in EKF BODY coordinates.
+#
+# Left camera:  [0.6,  0.12, 1.05]
+# Right camera: [0.6, -0.12, 1.05]
+#
+# baseline = right - left = [0, -0.24, 0]
+#
+# This is NOT the OpenCV stereo extrinsic T above.
+# ==========================================================
+
+stereo_baseline_body: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ 0.0, -0.24, 0.0 ]
+
+
+# ==========================================================
+# BEAMNG VEHICLE COORDINATE FRAME
+# ==========================================================
+#
+# IMPORTANT:
+# The following camera mounting parameters use the
+# native BEAMNG VEHICLE-LOCAL coordinate convention.
+#
+# BeamNG vehicle frame (V):
+#
+#   X = left
+#   Y = backward
+#   Z = up
+#
+# These are NOT expressed in the EKF body frame.
+#
+# Conversion from BeamNG vehicle frame to EKF body:
+#
+#   x_body = -y_beamng
+#   y_body =  x_beamng
+#   z_body =  z_beamng
+#
+# Rotation matrix:
+#
+#             [ 0  -1   0 ]
+#   R_BV =    [ 1   0   0 ]
+#             [ 0   0   1 ]
+#
+# The MATLAB-generated initialization function
+# performs this coordinate conversion.
+# ==========================================================
+
+
+# ==========================================================
+# CENTER OF GRAVITY POSITION
+# ==========================================================
+#
+# CoG position relative to the BeamNG vehicle reference
+# origin, expressed in the BeamNG vehicle frame (V).
+#
+# IMPORTANT:
+# [0,0,0] is currently a PLACEHOLDER.
+# Replace with the actual CoG position if the
+# BeamNG reference origin does not coincide with CoG.
+# ==========================================================
+
+cog_pos_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ 0.0, 0.0, 0.0 ]
+
+
+# ==========================================================
+# LEFT CAMERA MOUNTING - BEAMNG FRAME
+# ==========================================================
+#
+# All three vectors below are expressed in BeamNG's
+# native vehicle-local frame (V), NOT the EKF body frame.
+#
+# pos_V:
+#   Position of left camera origin relative to the
+#   BeamNG vehicle reference origin [m].
+#
+# dir_V:
+#   Camera viewing direction (forward optical axis).
+#
+# up_V:
+#   Direction toward the top of the camera image.
+#
+# dir and up specify camera mounting orientation.
+# ==========================================================
+
+camera_L_pos_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ 0.12, -0.6, 1.05 ]
+
+camera_L_dir_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ -1.605e-07, -1.0, -2.828e-07 ]
+
+camera_L_up_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ 1.589e-07, -1.715e-08, 1.0 ]
+
+
+# ==========================================================
+# RIGHT CAMERA MOUNTING - BEAMNG FRAME
+# ==========================================================
+#
+# Same BeamNG vehicle-local coordinate convention.
+#
+# Camera R is located 0.24 m to the right of Camera L.
+# ==========================================================
+
+camera_R_pos_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ -0.12, -0.6, 1.05 ]
+
+camera_R_dir_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ -5.55e-08, -1.0, 7.318e-08 ]
+
+camera_R_up_V: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ 3.655e-08, 1.221e-08, 1.0 ]

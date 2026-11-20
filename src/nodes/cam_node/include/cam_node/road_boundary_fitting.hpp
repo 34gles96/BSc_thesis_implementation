@@ -4,6 +4,8 @@
 
 #include <opencv2/core.hpp>
 #include <vector>
+#include "readConfig.hpp"
+#include "detectObstacles.hpp"
 
 // Extracts one representative (Z, X) point per depth bin
 std::vector<cv::Point2d> extractRepresentativePoints(

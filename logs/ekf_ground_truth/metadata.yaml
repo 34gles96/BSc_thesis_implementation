@@ -2,29 +2,29 @@ rosbag2_bagfile_information:
   version: 5
   storage_identifier: sqlite3
   duration:
-    nanoseconds: 164494342384
+    nanoseconds: 93761999211
   starting_time:
-    nanoseconds_since_epoch: 1794689976728377639
-  message_count: 2702
+    nanoseconds_since_epoch: 1795187209763566208
+  message_count: 1704
   topics_with_message_count:
-    - topic_metadata:
-        name: /ground_truth/gps_rover_front
-        type: sensor_msgs/msg/NavSatFix
-        serialization_format: cdr
-        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
-      message_count: 892
-    - topic_metadata:
-        name: /ground_truth/gps_base_front
-        type: sensor_msgs/msg/NavSatFix
-        serialization_format: cdr
-        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
-      message_count: 892
     - topic_metadata:
         name: /ground_truth/angular_velocity
         type: geometry_msgs/msg/Vector3Stamped
         serialization_format: cdr
         offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
-      message_count: 918
+      message_count: 578
+    - topic_metadata:
+        name: /ground_truth/gps_base_front
+        type: sensor_msgs/msg/NavSatFix
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 563
+    - topic_metadata:
+        name: /ground_truth/gps_rover_front
+        type: sensor_msgs/msg/NavSatFix
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 563
   compression_format: ""
   compression_mode: ""
   relative_file_paths:
@@ -32,7 +32,7 @@ rosbag2_bagfile_information:
   files:
     - path: ekf_ground_truth_0.db3
       starting_time:
-        nanoseconds_since_epoch: 1794689976728377639
+        nanoseconds_since_epoch: 1795187209763566208
       duration:
-        nanoseconds: 164494342384
-      message_count: 2702
+        nanoseconds: 93761999211
+      message_count: 1704

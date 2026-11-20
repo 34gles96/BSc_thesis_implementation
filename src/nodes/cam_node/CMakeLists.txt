@@ -60,13 +60,15 @@ include_directories(
 add_executable(subscriber_rx
   src/subscriber_rx.cpp
   src/desiredTrajectory.cpp
-  src/fitLanePoly.cpp
+  src/fitLanePoly_v2.cpp
   src/pinholeBackProjection.cpp
   src/readConfig.cpp
   src/initializeCameraMounting.cpp
   src/obstacleDetect.cpp
   src/roadBoundary.cpp
   src/roadLineValidator.cpp
+  src/horizontConfig.cpp
+  src/selected_white_px_filter.cpp
 )
 
 target_include_directories(subscriber_rx PRIVATE

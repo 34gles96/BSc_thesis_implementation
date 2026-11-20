@@ -4,6 +4,10 @@
 #include <vector>
 #include <iostream>
 
+// Forward declarations
+struct CameraParams;
+struct RoadPlane;
+
 typedef struct LanePolynomial
 {
     double a2 = 0.0;
@@ -14,5 +18,9 @@ typedef struct LanePolynomial
     bool is_road_width_Valid = false;
 } LanePolynomial;
 
-LanePolynomial fitLanePolynomialOpenCV(
-    const cv::Mat &uvIMG, const cv::Mat &XYZ_IMG, double &road_width); // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
+// first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
+std::vector<LanePolynomial> fitLanePolynomialOpenCV(
+    const cv::Mat &uvIMG,
+    const cv::Mat &XYZ_IMG, double &road_width,
+    const CameraParams &cam,
+    const RoadPlane &road_plane);
