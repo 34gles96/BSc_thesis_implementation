@@ -10,6 +10,8 @@
 #include "readConfig.hpp"
 #include "detectObstacles.hpp"
 
+constexpr double MAX_RMSE_M = 0.15; // Initial threshold; tune experimentally
+
 std::vector<cv::Point2d> extractRepresentativePoints(
     const cv::Mat &whiteLineXYZ,
     const std::vector<cv::Point> &selected_lane,
@@ -69,69 +71,10 @@ std::vector<cv::Point2d> extractRepresentativePoints(
     return XZ;
 }
 
-/*
 std::vector<double> secondOrderPolyFitting(
     const std::vector<cv::Point2d> &XZ)
 {
-    if (XZ.size() < 3)
-        return {};
-
-    // ============================================================
-    // 1. Determine the depth interval of the representative points
-    // ============================================================
-
-    double minZ = XZ.front().x;
-    double maxZ = XZ.front().x;
-
-    for (const cv::Point2d &point : XZ)
-    {
-        const double Z = point.x;
-        const double X = point.y;
-
-        if (!std::isfinite(Z) || !std::isfinite(X))
-            return {};
-
-        minZ = std::min(minZ, Z);
-        maxZ = std::max(maxZ, Z);
-    }
-
-    cv::Mat A(static_cast<int>(XZ.size()), 3, CV_64F);
-    cv::Mat B(static_cast<int>(XZ.size()), 1, CV_64F);
-
-    int i = 0;
-
-    for (const cv::Point2d &point : XZ)
-    {
-        const double Z = point.x;
-        const double X = point.y;
-
-        A.at<double>(i, 0) = Z * Z;
-        A.at<double>(i, 1) = Z;
-        A.at<double>(i, 2) = 1.0;
-
-        B.at<double>(i, 0) = X;
-
-        i++;
-    }
-
-    cv::Mat coeffs;
-
-    bool success = cv::solve(A, B, coeffs, cv::DECOMP_SVD);
-
-    if (!success)
-        return {};
-
-    return {
-        coeffs.at<double>(0, 0), // a2
-        coeffs.at<double>(1, 0), // a1
-        coeffs.at<double>(2, 0)  // a0
-    };
-}*/
-
-std::vector<double> secondOrderPolyFitting(
-    const std::vector<cv::Point2d> &XZ)
-{
-    if (XZ.size() < 3)
+    if (XZ.size() < 5) // 2nd order poly fttin needs at least 3 points but physicly unreasonable, safety guard at least 5
         return {};
 
     // ============================================================
@@ -244,6 +187,41 @@ std::vector<double> secondOrderPolyFitting(
         !std::isfinite(a1) ||
         !std::isfinite(a0))
     {
+        return {};
+    }
+
+    // ============================================================
+    // 4.1 VALIDATE POLYNOMIAL FIT USING RMSE
+    // ============================================================
+
+    double squared_error_sum = 0.0;
+
+    for (const cv::Point2d &point : XZ)
+    {
+        const double Z = point.x;
+        const double X = point.y;
+
+        const double s = (Z - Zc) / L;
+
+        // Predicted X using normalized polynomial
+        const double X_pred =
+            b2 * s * s + b1 * s + b0;
+
+        const double error = X - X_pred;
+
+        squared_error_sum += error * error;
+    }
+
+    const double RMSE =
+        std::sqrt(squared_error_sum / XZ.size());
+
+    std::cout << "[Polyfit] RMSE: " << RMSE << " m" << std::endl;
+
+    if (!std::isfinite(RMSE) || RMSE > MAX_RMSE_M)
+    {
+        std::cerr << "[Polyfit] Rejected: fitting error too large!"
+                  << std::endl;
+
         return {};
     }
 

@@ -6,10 +6,15 @@
 class BirdEyeViewVisualizer
 {
 public:
-    static void draw(const DesiredTrajectory &trajectory,
-                     double a2 = 0.0, double a1 = 0.0, double a0 = 0.0,
-                     const std::vector<cv::Vec3f> &raw_white_points = {},
-                     const double predictedHorizont_m = static_cast<double>(config::PREDICTED_HORIZON))
+    static void draw(
+        const DesiredTrajectory &trajectory,
+        double a2 = 0.0, double a1 = 0.0, double a0 = 0.0,
+        const std::vector<cv::Vec3f> &raw_white_points = {},
+        const double predictedHorizont_m = static_cast<double>(config::PREDICTED_HORIZON),
+        bool second_poly_valid = false,
+        double a2_2nd = 0.0,
+        double a1_2nd = 0.0,
+        double a0_2nd = 0.0)
     {
 
         // 1. Canvas Configuration
@@ -80,6 +85,39 @@ public:
             }
         }
 
+        // 5.1 DRAW SECOND FITTED POLYNOMIAL (Dark red line)
+
+        if (second_poly_valid)
+        {
+            std::vector<cv::Point> lane_pts_2nd;
+
+            for (double Z = config::MIN_TRAJECTORY_Z;
+                 Z <= config::PREDICTED_HORIZON;
+                 Z += 0.25)
+            {
+                double X = a2_2nd * Z * Z + a1_2nd * Z + a0_2nd;
+
+                int px = origin_x - static_cast<int>(X * scale);
+                int pz = origin_y - static_cast<int>(Z * scale);
+
+                if (px >= 0 && px < width && pz >= 0 && pz < height)
+                {
+                    lane_pts_2nd.push_back(cv::Point(px, pz));
+                }
+            }
+
+            for (size_t i = 1; i < lane_pts_2nd.size(); ++i)
+            {
+                cv::line(
+                    bev_img,
+                    lane_pts_2nd[i - 1],
+                    lane_pts_2nd[i],
+                    cv::Scalar(0, 0, 180),
+                    2,
+                    cv::LINE_AA);
+            }
+        }
+
         // 6. Draw Desired Centerline Trajectory (Green line & Yellow waypoints)
         std::vector<cv::Point> traj_pts;
         for (const auto &pt : trajectory.xyz_points)
@@ -104,6 +142,6 @@ public:
 
         // 7. Display the BEV window
         cv::imshow("Bird's-Eye View Metric Map", bev_img);
-        cv::waitKey(1);
+        // cv::waitKey(1);
     }
 };

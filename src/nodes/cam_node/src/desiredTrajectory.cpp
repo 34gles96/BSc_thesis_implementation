@@ -23,6 +23,7 @@ DesiredTrajectory drawDesiredTrajectoryOnImage(
 
     const auto &[a2, a1, a0, isValid, is_left_lane, is_road_width_Valid] = lanepoly_vec[0];
     const auto &[a2_2ndBest, a1_2ndBest, a0_2ndBest, isValid_2ndBest, is_left_lane_2ndBest, is_road_width_Valid_2ndBest] = lanepoly_vec[1];
+
     // for return type
     DesiredTrajectory result;
     float nan = std::numeric_limits<float>::quiet_NaN();
@@ -130,8 +131,15 @@ DesiredTrajectory drawDesiredTrajectoryOnImage(
         }
 
         // 2nd best
-        if (u_line_2nBest >= 0 && u_line_2nBest < original_bgr_frame.cols && v_line >= 0 && v_line < original_bgr_frame.rows)
-            lane_2d_pixels_2ndBest.push_back(cv::Point(u_line_2nBest, v_line));
+        if (isValid_2ndBest &&
+            u_line_2nBest >= 0 &&
+            u_line_2nBest < original_bgr_frame.cols &&
+            v_line >= 0 &&
+            v_line < original_bgr_frame.rows)
+        {
+            lane_2d_pixels_2ndBest.push_back(
+                cv::Point(u_line_2nBest, v_line));
+        }
 
         if (u_center >= 0 && u_center < original_bgr_frame.cols &&
             v_center >= 0 && v_center < original_bgr_frame.rows)

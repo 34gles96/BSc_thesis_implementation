@@ -459,7 +459,7 @@ private:
                 cv::Scalar(0, 255, 0),
                 2);
 
-            // cv::imshow("ROI Debug View", debug_image);
+            cv::imshow("ROI Debug View", debug_image);
             // cv::waitKey(1); //TODO:recomment
             //  --------------------------------
 
@@ -734,7 +734,21 @@ else
                 }
 
                 // Pass the raw points into the BEV visualizer
-                BirdEyeViewVisualizer::draw(new_trajectory, whiteCurveParams[0].a2, whiteCurveParams[0].a1, whiteCurveParams[0].a0, raw_white_3d, lane_depths.max_z);
+                const bool second_poly_valid =
+                    whiteCurveParams.size() > 1 &&
+                    whiteCurveParams[1].isValid;
+
+                BirdEyeViewVisualizer::draw(
+                    new_trajectory,
+                    whiteCurveParams[0].a2,
+                    whiteCurveParams[0].a1,
+                    whiteCurveParams[0].a0,
+                    raw_white_3d,
+                    lane_depths.max_z,
+                    second_poly_valid,
+                    second_poly_valid ? whiteCurveParams[1].a2 : 0.0,
+                    second_poly_valid ? whiteCurveParams[1].a1 : 0.0,
+                    second_poly_valid ? whiteCurveParams[1].a0 : 0.0);
 
                 // ============= PERFOMING TRANSFROMATION (CAM2ENU) DUE TO CLOSELY REALATED TIMESTAMP OF SENSOR =======
 

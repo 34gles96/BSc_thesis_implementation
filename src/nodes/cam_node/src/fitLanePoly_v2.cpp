@@ -8,7 +8,8 @@
 #include <cmath>
 #include <iostream>
 
-const double binSize = 0.1;
+constexpr double binSize = 0.1;
+constexpr double extractedPx_diff_rate = 0.4;
 
 // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
 std::vector<LanePolynomial> fitLanePolynomialOpenCV(
@@ -300,7 +301,7 @@ std::vector<LanePolynomial> fitLanePolynomialOpenCV(
 
     if (!(std::abs(
               static_cast<long long>(nb_whitePX_left) -
-              static_cast<long long>(nb_whitePX_right)) > Nb_px_selected_lane_ref * 0.55))
+              static_cast<long long>(nb_whitePX_right)) > Nb_px_selected_lane_ref * extractedPx_diff_rate))
     {
         if (secondValid && second_bounds)
         {
@@ -401,7 +402,7 @@ std::vector<LanePolynomial> fitLanePolynomialOpenCV(
 
     if (std::abs(
             static_cast<long long>(nb_whitePX_left) -
-            static_cast<long long>(nb_whitePX_right)) > Nb_px_selected_lane_ref * 0.30) // 30% of ref_lane pixel difference -> 2ndBest lane no valid
+            static_cast<long long>(nb_whitePX_right)) > Nb_px_selected_lane_ref * extractedPx_diff_rate) // 30% of ref_lane pixel difference -> 2ndBest lane no valid
     {
         result.is_road_width_Valid = false;
 

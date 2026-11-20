@@ -14,7 +14,7 @@ std::optional<TrajectoryBounds> calculateTrajectoryBoundsFromLane(
     std::vector<double> valid_depths;
     valid_depths.reserve(selected_lane.size());
 
-    constexpr double MAX_DEPTH_CAP = 45.0;
+    constexpr double MAX_DEPTH_CAP = 20.0;
     constexpr double MIN_DEPTH_CAP = 3.0;
 
     double farthest_z =
