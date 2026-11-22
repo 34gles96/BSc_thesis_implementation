@@ -1,0 +1,29 @@
+{
+    "configurations": [
+        {
+            "name": "ROS2",
+            "includePath": [
+                "${workspaceFolder}/src/nodes/ADAS_Sensor_fusion/include/**",
+                "${workspaceFolder}/src/nodes/ADAS_Sensor_fusion/include/EKFlib_v10/**",
+                "${workspaceFolder}/src/nodes/ADAS_Sensor_fusion/include/EKFlib_v10/EKF_func/**",
+                "${workspaceFolder}/src/nodes/cam_node/include/cam_node/CamLib_v2/**",
+                "${workspaceFolder}/src/nodes/cam_node/include/cam_node/CamLib_v2/camera_transform/**",
+                "${workspaceFolder}/src/nodes/mpc_node/include/MPClib/mpcController/**",
+                "${workspaceFolder}/src/nodes/mpc_node/include/MPClib/**",
+                "${workspaceFolder}/**",
+                "/opt/ros/humble/include/**",
+                "/usr/include/eigen3/**",
+                "/usr/include/opencv4/**",
+                "/opt/ros/humble/include/cv_bridge",
+                "/opt/ros/humble/include/cv_bridge/cv_bridge",
+                 "/home/base/beamng-ros2-ws/install/beamng_msgs/include/beamng_msgs/**"
+            ],
+            "compilerPath": "/usr/bin/g++",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
+
+

@@ -13,7 +13,7 @@ namespace config
     // inline constexpr double img_in_stream_vertical_cut_top = 0.55;
     inline constexpr double img_in_stream_vertical_cut_top = 0.55;
     // inline constexpr double img_in_stream_vertical_cut_bottom = 0.80;
-    inline constexpr double img_in_stream_vertical_cut_bottom = 0.9;
+    inline constexpr double img_in_stream_vertical_cut_bottom = 0.9; // 0.9
     // inline constexpr double img_in_stream_vertical_cut_bottom = 0.75;
 
     inline void updateTrajectoryBounds(

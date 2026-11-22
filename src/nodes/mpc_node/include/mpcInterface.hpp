@@ -8,6 +8,16 @@
 #include <yaml-cpp/yaml.h>
 #include "mpcController_types.h"
 
+struct TrajectoryPoint
+{
+    int32_t u;
+    int32_t v;
+
+    double E;
+    double N;
+    double U;
+};
+
 namespace MPC
 {
     using mpc_cfg = struct struct0_T;
@@ -16,8 +26,8 @@ namespace MPC
     using EN_y_v = double[4];
 
     // Outputs
-    double u_optimal[2]{};
-    coder::array<double, 2U> U_optimal;
+    // double u_optimal[2]{};
+    // coder::array<double, 2U> U_optimal;
 
     inline void init_mpc_cfg(const std::string &path, mpc_cfg &params)
     {

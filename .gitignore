@@ -32,7 +32,6 @@ ENV/
 
 # ROS 2 build & log artifacts
 install/
-log/
 
 # Rosbags / logs
 *.mcap
@@ -40,10 +39,14 @@ log/
 *.log
 
 # IDE & OS specific files
-.vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
 Thumbs.db
+
+# Custom ignored files & folders
+# Custom ignored files & folders
+202[0-9]-[0-9][0-9]-[0-9][0-9]/
+logs/

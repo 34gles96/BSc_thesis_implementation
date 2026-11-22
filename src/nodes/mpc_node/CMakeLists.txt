@@ -37,6 +37,9 @@ target_include_directories(mpc PUBLIC
 
 add_executable(mpc_subscriber
     src/MPCcontroller.cpp
+    src/mpcLogger.cpp
+    src/trajectoryConnector.cpp
+    src/buildRefHorizont.cpp
 )
 
 

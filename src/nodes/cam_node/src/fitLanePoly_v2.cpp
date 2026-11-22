@@ -9,7 +9,7 @@
 #include <iostream>
 
 constexpr double binSize = 0.1;
-constexpr double extractedPx_diff_rate = 0.4;
+constexpr double extractedPx_diff_rate = 0.2;
 
 // first arg correspond to white images, 2nd is cv::Mat<cv::Vec3f>(u,v) = (X,Y,Z) mapping, 3rd arg is modifiyng road_witdh
 std::vector<LanePolynomial> fitLanePolynomialOpenCV(

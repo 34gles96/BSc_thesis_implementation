@@ -24,22 +24,15 @@
 #include <deque>
 #include <cmath>
 #include <limits>
-
+#include "mpcLogger.hpp"
 #include <functional>
 
 #include <rclcpp/create_timer.hpp>
 
 #include "mpcInterface.hpp"
-
-struct TrajectoryPoint
-{
-    int32_t u;
-    int32_t v;
-
-    double E;
-    double N;
-    double U;
-};
+#include "mpcLogger.hpp"
+#include "trajectoryConnector.hpp"
+#include "buildRefHorizont.hpp"
 
 struct TrajectoryPointVector
 {
@@ -57,6 +50,7 @@ public:
                   .append_parameter_override("use_sim_time", true))
     {
         mpcController_initialize();
+        mpcLoggger::initializeMPCLog();
 
         MPC::init_mpc_cfg("/ADC_27/configData/mpc_cfg.yaml", this->mpc_cfg_);
 
@@ -109,6 +103,7 @@ public:
 
     ~MPCSubscriber()
     {
+        mpcLoggger::closeMPCLog();
         mpcController_terminate();
     }
 
@@ -117,10 +112,29 @@ private:
     void trajectoryCallback(
         const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
     {
+        // =====================================================
+        // 1. MEASURE TRAJECTORY AGE AT CALLBACK ENTRY
+        // =====================================================
 
-        std::string frame = msg->header.frame_id; // "enu"
+        const double callback_sim_time_ms =
+            static_cast<double>(
+                this->get_clock()->now().nanoseconds()) /
+            1e6;
 
-        // Create iterators for each field
+        const double trajectory_timestamp_ms =
+            static_cast<double>(
+                rclcpp::Time(msg->header.stamp).nanoseconds()) /
+            1e6;
+
+        const double reception_age_ms =
+            callback_sim_time_ms - trajectory_timestamp_ms;
+
+        // =====================================================
+        // 2. EXTRACT TRAJECTORY POINTS
+        // =====================================================
+
+        std::string frame = msg->header.frame_id;
+
         sensor_msgs::PointCloud2ConstIterator<int32_t> u(*msg, "u");
         sensor_msgs::PointCloud2ConstIterator<int32_t> v(*msg, "v");
 
@@ -128,7 +142,6 @@ private:
         sensor_msgs::PointCloud2ConstIterator<double> y(*msg, "y");
         sensor_msgs::PointCloud2ConstIterator<double> z(*msg, "z");
 
-        // Number of received trajectory points
         const size_t N =
             static_cast<size_t>(msg->width) * msg->height;
 
@@ -155,36 +168,81 @@ private:
             ++z;
         }
 
-        // Example: accessing the extracted trajectory
-        for (const auto &point : trajectory)
-        {
-            RCLCPP_INFO(
-                this->get_logger(),
-                "Pixel (%d,%d) -> ENU (%.3f, %.3f, %.3f)",
-                point.u, point.v,
-                point.E, point.N, point.U);
-        }
+        // =====================================================
+        // 3. UPDATE SHARED TRAJECTORY
+        // =====================================================
 
         {
-            // Update shared trajectory
-            std::lock_guard<std::mutex>
-                lock(trajectory_mutex_);
+            std::lock_guard<std::mutex> lock(trajectory_mutex_);
 
-            TrajectoryPointVector_.desired_trajectory_ = std::move(trajectory);
-            TrajectoryPointVector_.timestamp_ms = static_cast<double>(
-                                                      rclcpp::Time(msg->header.stamp).nanoseconds()) /
-                                                  1e6;
+            TrajectoryPointVector_.desired_trajectory_ =
+                std::move(trajectory);
+
+            TrajectoryPointVector_.timestamp_ms =
+                trajectory_timestamp_ms;
         }
+
+        // =====================================================
+        // 4. LOGGING
+        // =====================================================
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Received trajectory: points=%zu | frame=%s | "
+            "Age at callback entry=%.3f ms",
+            N,
+            frame.c_str(),
+            reception_age_ms);
     }
 
     void EKFCallback(
         const nav_msgs::msg::Odometry::ConstSharedPtr msg)
     {
+        // =====================================================
+        // 1. CURRENT SIMULATOR TIME
+        // =====================================================
+
+        const double sim_now_ms =
+            static_cast<double>(
+                this->get_clock()->now().nanoseconds()) /
+            1e6;
+
+        // =====================================================
+        // 2. EKF MEASUREMENT TIMESTAMP
+        // =====================================================
+
+        const double ekf_timestamp_ms =
+            static_cast<double>(
+                rclcpp::Time(msg->header.stamp).nanoseconds()) /
+            1e6;
+
+        // =====================================================
+        // 3. EKF MEASUREMENT AGE
+        // =====================================================
+
+        const double ekf_age_ms =
+            sim_now_ms - ekf_timestamp_ms;
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "EKF measurement age at callback entry: %.3f ms",
+            ekf_age_ms);
+
+        // =====================================================
+        // 4. STORE EKF MEASUREMENT
+        // =====================================================
+
         std::lock_guard<std::mutex> lock(ekf_mutex_);
 
         ekf_buffer_.push_back(*msg);
 
-        if (ekf_buffer_.size() > 60)
+        constexpr std::size_t ekf_buffer_size = 150;
+
+        if (ekf_buffer_.size() > ekf_buffer_size)
             ekf_buffer_.pop_front();
     }
 
@@ -245,11 +303,24 @@ private:
         double min_diff_ms =
             std::numeric_limits<double>::max();
 
+        double selected_ekf_time_ms = 0.0;
+        double oldest_ekf_time_ms = 0.0;
+        double newest_ekf_time_ms = 0.0;
+        size_t buffer_size = 0;
+
         {
             std::lock_guard<std::mutex> lock(ekf_mutex_);
 
             if (ekf_buffer_.empty())
                 return;
+
+            buffer_size = ekf_buffer_.size();
+
+            oldest_ekf_time_ms =
+                rclcpp::Time(ekf_buffer_.front().header.stamp).nanoseconds() / 1e6;
+
+            newest_ekf_time_ms =
+                rclcpp::Time(ekf_buffer_.back().header.stamp).nanoseconds() / 1e6;
 
             latest_ekf_state = ekf_buffer_.back();
 
@@ -264,8 +335,88 @@ private:
                     ekf_time_ms - trajectory_data.timestamp_ms);
 
                 if (diff_ms < min_diff_ms)
+                {
                     min_diff_ms = diff_ms;
+                    latest_ekf_state = state;
+                    selected_ekf_time_ms = ekf_time_ms;
+                }
             }
+        }
+
+        // =====================================================
+        // MEASUREMENT AGES RELATIVE TO CURRENT SIMULATOR TIME
+        // =====================================================
+
+        const double sim_now_ms =
+            static_cast<double>(
+                this->get_clock()->now().nanoseconds()) /
+            1e6;
+
+        // Age of trajectory currently used by MPC
+        const double trajectory_age_sim_ms =
+            sim_now_ms - trajectory_data.timestamp_ms;
+
+        // Age of the selected EKF measurement
+        const double selected_ekf_age_sim_ms =
+            sim_now_ms - selected_ekf_time_ms;
+
+        // Age of the newest available EKF measurement
+        const double newest_ekf_age_sim_ms =
+            sim_now_ms - newest_ekf_time_ms;
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "SIM TIME=%.3f ms | "
+            "Trajectory age=%.3f ms | "
+            "Selected EKF age=%.3f ms | "
+            "Newest EKF age=%.3f ms",
+            sim_now_ms,
+            trajectory_age_sim_ms,
+            selected_ekf_age_sim_ms,
+            newest_ekf_age_sim_ms);
+
+        // Log the timestamp difference
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Trajectory/EKF timestamp difference: %.3f ms",
+            min_diff_ms);
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Trajectory=%.3f | EKF selected=%.3f | "
+            "Signed difference=%.3f ms | "
+            "Buffer oldest=%.3f | newest=%.3f | size=%zu",
+            trajectory_data.timestamp_ms,
+            selected_ekf_time_ms,
+            selected_ekf_time_ms - trajectory_data.timestamp_ms,
+            oldest_ekf_time_ms,
+            newest_ekf_time_ms,
+            buffer_size);
+
+        // =====================================================
+        // 2.1 safety guard for EKF pose and desired traejctory timestamp dismatch // VALIDATE TIMESTAMP SYNCHRONIZATION
+        // =====================================================
+
+        constexpr double MAX_SYNC_DIFF_MS = 50.0;
+
+        if (min_diff_ms > MAX_SYNC_DIFF_MS)
+        {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(),
+                *this->get_clock(),
+                1000,
+                "Rejecting MPC update: trajectory/EKF timestamp "
+                "difference too large (%.3f ms, maximum %.3f ms)",
+                min_diff_ms,
+                MAX_SYNC_DIFF_MS);
+
+            return;
         }
 
         // =====================================================
@@ -354,21 +505,41 @@ private:
         double refHorizon[4 * Np]{};
 
         // TODO: Replace with configured target velocity
-        constexpr double v_reference = 2.0;
+        constexpr double v_reference = 0.5; // m/s
+
+        // Reference horizon diagnostics
+        ReferenceHorizonDebug ref_debug;
 
         if (!buildReferenceHorizon(
                 trajectory_data.desired_trajectory_,
-                x_current[0],
-                x_current[1],
+                x_current[0], // Current East
+                x_current[1], // Current North
+                x_current[2], // Current yaw
                 v_reference,
                 Ts,
-                refHorizon))
+                refHorizon,
+                &ref_debug))
         {
             RCLCPP_WARN(
                 this->get_logger(),
                 "Cannot construct MPC reference horizon");
+
             return;
         }
+
+        // Log reference construction diagnostics
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Vehicle=(%.3f, %.3f) | "
+            "Projection=(%.3f, %.3f) | "
+            "Gap=%.3f m",
+            ref_debug.vehicle_E,
+            ref_debug.vehicle_N,
+            ref_debug.projection_E,
+            ref_debug.projection_N,
+            ref_debug.projection_distance);
 
         // =====================================================
         // 6. PREPARE MATLAB-GENERATED MPC PARAMETERS
@@ -413,10 +584,23 @@ private:
             u_optimal,
             U_optimal);
 
+        // =====================================================
+        // 8.1. LOGS
+        // =====================================================
         const double execution_ms =
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - start)
                 .count();
+
+        mpcLoggger::writeMPCLog(
+            Ts,
+            x_current,
+            refHorizon,
+            u_last_applied_,
+            params,
+            u_optimal,
+            U_optimal,
+            execution_ms);
 
         // =====================================================
         // 9. EXTRACT OPTIMAL CONTROL
@@ -475,8 +659,6 @@ private:
         cmd.parkingbrake = 0.0;
         cmd.clutch = 0.0;
 
-        control_pub_->publish(cmd);
-
         // =====================================================
         // 13. PUBLISH CONTROL
         // =====================================================
@@ -492,6 +674,7 @@ private:
         // 14. DEBUG
         // =====================================================
 
+        /*
         RCLCPP_INFO(
             this->get_logger(),
             "MPC: a=%.3f m/s2 | "
@@ -504,6 +687,7 @@ private:
             cmd.throttle,
             cmd.brake);
 
+            */
         // TODO: Publish steering and acceleration commands.
         // TODO: Update u_last_applied_ when commands are applied.
     }
@@ -533,161 +717,6 @@ private:
 
     // Previous MPC-requested control [steering rad, acceleration m/s²]
     std::array<double, 2> u_last_applied_{0.0, 0.0};
-
-    bool buildReferenceHorizon(
-        const std::vector<TrajectoryPoint> &trajectory,
-        double E_current,
-        double N_current,
-        double v_reference,
-        double Ts,
-        double refHorizon[40])
-    {
-        constexpr int Np = 10;
-
-        struct Point2D
-        {
-            double E;
-            double N;
-        };
-
-        // =====================================================
-        // 1. PREPARE THE DESIRED PATH
-        // =====================================================
-
-        std::vector<Point2D> path;
-
-        for (const auto &point : trajectory)
-        {
-            if (!std::isfinite(point.E) ||
-                !std::isfinite(point.N))
-                continue;
-
-            // Remove consecutive duplicate points
-            if (!path.empty() &&
-                std::hypot(point.E - path.back().E,
-                           point.N - path.back().N) < 1e-4)
-                continue;
-
-            path.push_back({point.E, point.N});
-        }
-
-        if (path.size() < 2 ||
-            !std::isfinite(Ts) || Ts <= 0.0 ||
-            !std::isfinite(v_reference) || v_reference < 0.0)
-            return false;
-
-        // =====================================================
-        // 2. CALCULATE CUMULATIVE PATH DISTANCES
-        // =====================================================
-
-        std::vector<double> s(path.size(), 0.0);
-
-        for (size_t i = 1; i < path.size(); ++i)
-        {
-            const double dE = path[i].E - path[i - 1].E;
-            const double dN = path[i].N - path[i - 1].N;
-
-            s[i] = s[i - 1] + std::hypot(dE, dN);
-        }
-
-        // =====================================================
-        // 3. FIND VEHICLE'S CLOSEST PROJECTION
-        // =====================================================
-
-        double s_current = 0.0;
-
-        double min_distance_sq =
-            std::numeric_limits<double>::max();
-
-        for (size_t i = 0; i + 1 < path.size(); ++i)
-        {
-            // Segment direction
-            const double dE = path[i + 1].E - path[i].E;
-            const double dN = path[i + 1].N - path[i].N;
-
-            const double len_sq = dE * dE + dN * dN;
-
-            // Projection parameter
-            double t =
-                ((E_current - path[i].E) * dE +
-                 (N_current - path[i].N) * dN) /
-                len_sq;
-
-            // Restrict projection to this segment
-            t = std::max(0.0, std::min(1.0, t));
-
-            // Projected point coordinates
-            const double E_proj = path[i].E + t * dE;
-            const double N_proj = path[i].N + t * dN;
-
-            // Squared distance to vehicle
-            const double distance_sq =
-                std::pow(E_current - E_proj, 2) +
-                std::pow(N_current - N_proj, 2);
-
-            if (distance_sq < min_distance_sq)
-            {
-                min_distance_sq = distance_sq;
-
-                // Distance along the path to projection
-                s_current = s[i] + t * (s[i + 1] - s[i]);
-            }
-        }
-
-        // =====================================================
-        // 4. GENERATE THE FUTURE REFERENCE STATES
-        // =====================================================
-
-        for (int k = 0; k < Np; ++k)
-        {
-            // Future reference distance along path
-            const double s_ref = std::min(
-                s_current + (k + 1) * v_reference * Ts,
-                s.back());
-
-            // Find the segment containing s_ref
-            auto it = std::lower_bound(
-                s.begin() + 1,
-                s.end(),
-                s_ref);
-
-            size_t j = static_cast<size_t>(
-                std::distance(s.begin(), it));
-
-            if (j >= path.size())
-                j = path.size() - 1;
-
-            // Interpolation parameter
-            const double alpha =
-                (s_ref - s[j - 1]) / (s[j] - s[j - 1]);
-
-            // Interpolated reference ENU coordinates
-            const double E_ref =
-                path[j - 1].E +
-                alpha * (path[j].E - path[j - 1].E);
-
-            const double N_ref =
-                path[j - 1].N +
-                alpha * (path[j].N - path[j - 1].N);
-
-            // Reference heading from segment direction
-            const double yaw_ref = std::atan2(
-                path[j].N - path[j - 1].N,
-                path[j].E - path[j - 1].E);
-
-            // Stop reference at the end of the available path
-            const double v_ref =
-                (s_ref >= s.back()) ? 0.0 : v_reference;
-
-            // Store MATLAB-compatible column-major matrix
-            refHorizon[4 * k + 0] = E_ref;
-            refHorizon[4 * k + 1] = N_ref;
-            refHorizon[4 * k + 2] = yaw_ref;
-            refHorizon[4 * k + 3] = v_ref;
-        }
-
-        return true;
-    }
 };
 
 int main(int argc, char **argv)

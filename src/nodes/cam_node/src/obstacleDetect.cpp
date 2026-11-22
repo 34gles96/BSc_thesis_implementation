@@ -11,405 +11,181 @@
 
 #include "detectObstacles.hpp"
 #include "fitLanePoly.hpp"
+#include <iterator>
+#include "config.hpp"
 
-bool detectRoad(struct RoadPlane &rp,
-                const cv::Mat_<cv::Vec3d> &XYZ_cam)
+bool detectRoad(
+    RoadPlane &rp,
+    const cv::Mat_<cv::Vec3d> &XYZ_cam)
 {
-
     constexpr double minRoadDepth = 8.0;
     constexpr double maxRoadDepth = 15.0;
 
-    cv::Rect roadROI(
-        0,
-        XYZ_cam.rows / 2,
-        XYZ_cam.cols,
-        XYZ_cam.rows - XYZ_cam.rows / 2);
+    constexpr int iterations = 100;
+    constexpr double threshold_road = 0.15;
 
-    std::vector<cv::Vec3d> pointCloud = matToVector(
-        XYZ_cam,
-        roadROI,
-        minRoadDepth,
-        maxRoadDepth);
+    constexpr std::size_t MAX_RANSAC_POINTS = 12000;
+    constexpr int MIN_FULL_INLIERS = 100;
+
+    // ============================================================
+    // Define vertical ROI for road-plane detection
+    // ============================================================
+
+    const int roi_top = static_cast<int>((
+                                             XYZ_cam.rows * ::config::img_in_stream_vertical_cut_top) *
+                                         1.1);
+
+    const int roi_bottom = static_cast<int>((
+                                                XYZ_cam.rows * ::config::img_in_stream_vertical_cut_bottom) *
+                                            0.8);
+
+    const cv::Rect roadROI(
+        0,
+        roi_top,
+        XYZ_cam.cols,
+        roi_bottom - roi_top);
+
+    // -------------------------------------------------
+    // 1. Extract all valid 3D points
+    // -------------------------------------------------
+
+    const std::vector<cv::Vec3d> pointCloud =
+        matToVector(
+            XYZ_cam,
+            roadROI,
+            minRoadDepth,
+            maxRoadDepth);
 
     if (pointCloud.size() < 3)
         return false;
 
-    std::mt19937 rng(42);                                                          // deterministic pseudosquencte of integers
-    std::uniform_int_distribution<size_t> pointSelector(0, pointCloud.size() - 1); // uniformly distribtued seqence of det seq of integers
+    // -------------------------------------------------
+    // 2. Create a representative RANSAC subset
+    // -------------------------------------------------
 
-    constexpr int iterations = 350;
-    constexpr double threshold_road = 0.15;
+    std::mt19937 rng(42);
+
+    const std::size_t sampleCount =
+        std::min(MAX_RANSAC_POINTS, pointCloud.size());
+
+    std::vector<cv::Vec3d> ransacPoints;
+    ransacPoints.reserve(sampleCount);
+
+    std::sample(
+        pointCloud.begin(),
+        pointCloud.end(),
+        std::back_inserter(ransacPoints),
+        sampleCount,
+        rng);
+
+    // -------------------------------------------------
+    // 3. Configure RANSAC
+    // -------------------------------------------------
+
+    std::uniform_int_distribution<std::size_t> pointSelector(
+        0,
+        ransacPoints.size() - 1);
+
     const cv::Vec3d up_cam(0.0, -1.0, 0.0);
-    int best_inlierCount = 0;
 
-    for (size_t i = 0; i < iterations; i++)
+    int bestInlierCount = 0;
+
+    cv::Vec3d bestNormal;
+    double bestD = 0.0;
+
+    bool modelFound = false;
+
+    // -------------------------------------------------
+    // 4. RANSAC candidate generation and scoring
+    // -------------------------------------------------
+
+    for (int i = 0; i < iterations; ++i)
     {
-
-        // chosing from unifromly distrubited generated point of image
-        const size_t a = pointSelector(rng);
-        const size_t b = pointSelector(rng);
-        const size_t c = pointSelector(rng); // purpose of const?
+        const std::size_t a = pointSelector(rng);
+        const std::size_t b = pointSelector(rng);
+        const std::size_t c = pointSelector(rng);
 
         if (a == b || a == c || b == c)
             continue;
 
-        const cv::Vec3d &p1 = pointCloud[a];
-        const cv::Vec3d &p2 = pointCloud[b];
-        const cv::Vec3d &p3 = pointCloud[c];
+        const cv::Vec3d &p1 = ransacPoints[a];
+        const cv::Vec3d &p2 = ransacPoints[b];
+        const cv::Vec3d &p3 = ransacPoints[c];
 
-        cv::Vec3d v1 = p1 - p2;
-        cv::Vec3d v2 = p1 - p3;
+        const cv::Vec3d v1 = p1 - p2;
+        const cv::Vec3d v2 = p1 - p3;
 
-        cv::Vec3d norm_vec = v1.cross(v2);
-        double norm_magn = cv::norm(norm_vec);
+        cv::Vec3d normal = v1.cross(v2);
 
-        // safaty guard
-        if (norm_magn < 1e-9)
+        const double normalMagnitude = cv::norm(normal);
+
+        if (normalMagnitude < 1e-9)
             continue;
 
-        norm_vec /= norm_magn;
+        normal /= normalMagnitude;
 
-        // orient norm vector
-        if (norm_vec.dot(up_cam) < 0)
-            norm_vec = -norm_vec;
+        // Orient normal towards the upward direction.
+        if (normal.dot(up_cam) < 0.0)
+            normal = -normal;
 
-        // Reject approximately vertical surfaces
-        if (norm_vec.dot(up_cam) < 0.80)
+        // Reject approximately vertical surfaces.
+        if (normal.dot(up_cam) < 0.80)
             continue;
 
-        //  Calculate plane coefficient d
-        double d = -norm_vec.dot(p1);
+        const double d = -normal.dot(p1);
 
+        // Evaluate candidate using only the RANSAC subset.
         int inlierCount = 0;
-        for (const auto &point : pointCloud)
-        {
-            double vertical_height_naiv = std::abs(
-                norm_vec.dot(point) + d);
 
-            if (vertical_height_naiv < threshold_road)
+        for (const auto &point : ransacPoints)
+        {
+            const double distance =
+                std::abs(normal.dot(point) + d);
+
+            if (distance < threshold_road)
                 ++inlierCount;
         }
 
-        if (inlierCount > best_inlierCount)
+        if (inlierCount > bestInlierCount)
         {
-            best_inlierCount = inlierCount;
+            bestInlierCount = inlierCount;
 
-            rp.normal = norm_vec;
-            rp.d = d;
+            bestNormal = normal;
+            bestD = d;
+
+            modelFound = true;
         }
     }
 
-    return best_inlierCount >= 100;
-}
+    if (!modelFound)
+        return false;
 
-void detectObstacles(const cv::Mat_<cv::Vec3d> &XYZ_cam,
-                     const RoadPlane &roadplane,
-                     const double obstacleTreshold,
-                     cv::Mat1d &heightMap,
-                     cv::Mat1b &ObstacleMast,
-                     const cv::Vec3d &upDirecton)
-{
+    // -------------------------------------------------
+    // 5. Validate the selected plane against ALL points
+    // -------------------------------------------------
 
-    heightMap = cv::Mat1d(
-        XYZ_cam.size(),
-        std::numeric_limits<double>::quiet_NaN());
+    int fullInlierCount = 0;
 
-    ObstacleMast = cv::Mat1b::zeros(XYZ_cam.size());
-
-    // Normalize upward direction
-    const double upNorm = cv::norm(upDirecton);
-
-    if (upNorm < 1e-9)
-        throw std::runtime_error("Invalid upward vector");
-
-    const cv::Vec3d unitUp = upDirecton / upNorm;
-
-    const double denominator = roadplane.normal.dot(unitUp); // due to expression of calc of vetical height
-
-    if (std::abs(denominator) < 1e-6) // safety guard
-        throw std::runtime_error("Invalid road-plane orientation");
-
-    // Examine every image pixel
-    for (int y = 0; y < XYZ_cam.rows; ++y)
+    for (const auto &point : pointCloud)
     {
-        for (int x = 0; x < XYZ_cam.cols; ++x)
-        {
-            const cv::Vec3d &point = XYZ_cam(y, x);
+        const double distance =
+            std::abs(bestNormal.dot(point) + bestD);
 
-            // Reject invalid reconstructed points
-            if (!std::isfinite(point[0]) ||
-                !std::isfinite(point[1]) ||
-                !std::isfinite(point[2]) ||
-                point[2] <= 0.0)
-            {
-                continue;
-            }
-
-            constexpr double minObstacleDepth = 0.5;
-            constexpr double maxObstacleDepth = 30.0;
-
-            if (point[2] < minObstacleDepth ||
-                point[2] > maxObstacleDepth)
-            {
-                continue;
-            }
-
-            // Vertical height above road in meters
-            const double height =
-                (roadplane.normal.dot(point) + roadplane.d) / denominator;
-
-            heightMap(y, x) = height;
-
-            // Classify potential obstacle pixels if (height > heightThreshold)
-
-            if (height > obstacleTreshold)
-            {
-                ObstacleMast(y, x) = 255;
-            }
-        }
-    }
-}
-
-void drawDetectedObstacles(
-    const cv::Mat1b &obstacleMask,
-    cv::Mat &leftImage)
-{
-    // safety guard
-    if (obstacleMask.empty() ||
-        leftImage.empty() ||
-        obstacleMask.size() != leftImage.size())
-        return;
-
-    cv::Mat labels;
-    cv::Mat stats;
-    cv::Mat centroids;
-
-    int numComponents = cv::connectedComponentsWithStats(
-        obstacleMask,
-        labels,
-        stats,
-        centroids,
-        8,
-        CV_32S);
-
-    // ============= CONFIG TYPES ===============
-    constexpr int minArea = 350; // Increase to filter more noise
-    constexpr int maxBoxes = 15; // Maximum displayed boxes
-    constexpr int minWidth = 9;
-    constexpr int minHeight = 9;
-
-    struct Region
-    {
-        int id;
-        cv::Rect box;
-        int area;
-    };
-
-    std::vector<Region> regions;
-
-    // ===================================
-
-    // ===== PROCESING STATS OF OBSTACLES ======
-    // Start at 1 because label 0 is background.
-    for (int id = 1; id < numComponents; ++id)
-    {
-        int x = stats.at<int>(id, cv::CC_STAT_LEFT);
-        int y = stats.at<int>(id, cv::CC_STAT_TOP);
-
-        int width =
-            stats.at<int>(id, cv::CC_STAT_WIDTH);
-
-        int height =
-            stats.at<int>(id, cv::CC_STAT_HEIGHT);
-
-        int area =
-            stats.at<int>(id, cv::CC_STAT_AREA);
-
-        // Ignore very small regions
-        if (area < minArea ||
-            width < minWidth ||
-            height < minHeight)
-            continue;
-
-        // Ignore regions entirely above the image midpoint
-        if (y + height < leftImage.rows / 2)
-            continue;
-
-        regions.push_back({id,
-                           cv::Rect(x, y, width, height),
-                           area});
+        if (distance < threshold_road)
+            ++fullInlierCount;
     }
 
-    // =====================================================================
+    // -------------------------------------------------
+    // 6. Accept the road plane
+    // -------------------------------------------------
 
-    // Sort regions by number of detected obstacle pixels
-    std::sort(
-        regions.begin(),
-        regions.end(),
-        [](const Region &a, const Region &b)
-        {
-            return a.area > b.area;
-        });
+    if (fullInlierCount < MIN_FULL_INLIERS)
+        return false;
 
-    // Color-blind-friendly palette (OpenCV uses BGR)
-    const cv::Scalar boxColor(178, 114, 0); // Blue
-    const cv::Scalar labelBg(66, 228, 240); // Yellow
-    const cv::Scalar textColor(0, 0, 0);    // Black
+    rp.normal = bestNormal;
+    rp.d = bestD;
 
-    // Draw only the largest regions
-    int count = std::min(
-        maxBoxes,
-        static_cast<int>(regions.size()));
-
-    for (int i = 0; i < count; ++i)
-    {
-        const Region &region = regions[i];
-        const cv::Rect &boundingBox = region.box;
-
-        // ===============.  Draw bounding box with dark outer border ======
-
-        // Draw bounding box
-        cv::rectangle(
-            leftImage,
-            boundingBox,
-            cv::Scalar(178, 114, 0), // blue
-            2);
-
-        // Simple label text
-        std::string label =
-            "# " + std::to_string(region.id);
-
-        const int font = cv::FONT_HERSHEY_SIMPLEX;
-        const double fontScale = 0.45;
-        const int thickness = 1;
-        const int padding = 3;
-
-        int baseline = 0;
-
-        cv::Size textSize = cv::getTextSize(
-            label,
-            font,
-            fontScale,
-            thickness,
-            &baseline);
-
-        int labelW = textSize.width + 2 * padding;
-        int labelH = textSize.height + baseline + 2 * padding;
-
-        // Put label above box if possible, otherwise slightly inside
-        int labelX = boundingBox.x;
-        int labelY = boundingBox.y - labelH - 2;
-
-        if (labelY < 0)
-            labelY = boundingBox.y + 2;
-
-        labelX = std::clamp(
-            labelX,
-            0,
-            leftImage.cols - labelW);
-
-        labelY = std::clamp(
-            labelY,
-            0,
-            leftImage.rows - labelH);
-
-        // Light simple background
-        cv::rectangle(
-            leftImage,
-            cv::Rect(labelX, labelY, labelW, labelH),
-            cv::Scalar(230, 230, 230), // light gray
-            cv::FILLED);
-
-        // Thin border around label
-        cv::rectangle(
-            leftImage,
-            cv::Rect(labelX, labelY, labelW, labelH),
-            cv::Scalar(80, 80, 80),
-            1);
-
-        // Normal black text
-        cv::putText(
-            leftImage,
-            label,
-            cv::Point(
-                labelX + padding,
-                labelY + padding + textSize.height),
-            font,
-            fontScale,
-            cv::Scalar(0, 0, 0),
-            thickness,
-            cv::LINE_AA);
-
-        std::cout
-            << "Region " << region.id
-            << " | Area: " << region.area << " pixels"
-            << " | Position: (" << boundingBox.x
-            << ", " << boundingBox.y << ")"
-            << "\n";
-    }
-}
-
-void filterObstaclesToLane(
-    const cv::Mat_<cv::Vec3d> &XYZ_cam,
-    cv::Mat1b &obstacleMask,
-    const LanePolynomial &roadPoly,
-    double laneWidth)
-{
-    CV_Assert(XYZ_cam.size() == obstacleMask.size());
-    CV_Assert(laneWidth > 0.0);
-
-    for (int y = 0; y < XYZ_cam.rows; ++y)
-    {
-        for (int x = 0; x < XYZ_cam.cols; ++x)
-        {
-            // Only process previously detected obstacle pixels
-            if (obstacleMask(y, x) == 0)
-                continue;
-
-            const cv::Vec3d &point = XYZ_cam(y, x);
-
-            const double X = point[0];
-            const double Z = point[2];
-
-            if (!std::isfinite(X) ||
-                !std::isfinite(Z) ||
-                Z <= 0.0)
-            {
-                obstacleMask(y, x) = 0;
-                continue;
-            }
-
-            // Evaluate white road-line polynomial at depth Z
-            const double whiteLineX =
-                roadPoly.a2 * Z * Z + roadPoly.a1 * Z + roadPoly.a0;
-
-            if (!std::isfinite(whiteLineX))
-            {
-                obstacleMask(y, x) = 0;
-                continue;
-            }
-
-            double minX;
-            double maxX;
-
-            if (!roadPoly.is_left_lane)
-            {
-                minX = whiteLineX - laneWidth;
-                maxX = whiteLineX;
-            }
-            else
-            {
-                minX = whiteLineX;
-                maxX = whiteLineX + laneWidth;
-            }
-
-            // Reject detected obstacle pixels outside the lane
-            if (X < minX || X > maxX)
-            {
-                obstacleMask(y, x) = 0;
-            }
-        }
-    }
+    return true;
 }
 
 // HELPER

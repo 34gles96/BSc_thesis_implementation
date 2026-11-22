@@ -6,7 +6,7 @@
 class BirdEyeViewVisualizer
 {
 public:
-    static void draw(
+    static cv::Mat draw(
         const DesiredTrajectory &trajectory,
         double a2 = 0.0, double a1 = 0.0, double a0 = 0.0,
         const std::vector<cv::Vec3f> &raw_white_points = {},
@@ -141,7 +141,8 @@ public:
         }
 
         // 7. Display the BEV window
-        cv::imshow("Bird's-Eye View Metric Map", bev_img);
+        // cv::imshow("Bird's-Eye View Metric Map", bev_img);
+        return bev_img;
         // cv::waitKey(1);
     }
 };

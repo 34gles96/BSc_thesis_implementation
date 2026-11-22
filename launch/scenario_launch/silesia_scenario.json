@@ -44,7 +44,7 @@
                         1280,
                         720
                     ],
-                    "field_of_view_y": 50,
+                    "field_of_view_y": 30,
                     "near_far_planes": [
                         0.05,
                         100
@@ -82,7 +82,7 @@
                         1280,
                         720
                     ],
-                    "field_of_view_y": 50,
+                    "field_of_view_y": 30,
                     "near_far_planes": [
                         0.05,
                         100

@@ -17,6 +17,7 @@
 
 // debug
 #include "debugWhiteLine.hpp"
+#include <std_msgs/msg/header.hpp>
 
 #include <cmath>
 // ===============================================
@@ -140,7 +141,7 @@ public:
 
         // Pass the queue size (2) directly to Synchronizer, then set the 8 ms max interval via getPolicy()
         sync_ = std::make_shared<message_filters::Synchronizer<ApproxSyncPolicy>>(
-            5, sub_left_, sub_right_);
+            1, sub_left_, sub_right_); // initially it was 5
 
         sync_->getPolicy()->setMaxIntervalDuration(
             rclcpp::Duration(std::chrono::milliseconds(20)));
@@ -153,6 +154,27 @@ public:
             std::placeholders::_1,
             std::placeholders::_2));
 
+        // ======================== DEBUG IMAGE PUBLISHERS ========================
+
+        birdview_image_pub_ =
+            this->create_publisher<sensor_msgs::msg::Image>(
+                "/adas/debug/birdview_image",
+                rclcpp::QoS(1));
+
+        white_pixels_image_pub_ =
+            this->create_publisher<sensor_msgs::msg::Image>(
+                "/adas/debug/white_pixels_image",
+                rclcpp::QoS(1));
+
+        desired_trajectory_image_pub_ =
+            this->create_publisher<sensor_msgs::msg::Image>(
+                "/adas/debug/desired_trajectory_image",
+                rclcpp::QoS(1));
+
+        // ======================== disparyit config-initializaton ========================
+
+        //============ CONFIG A : GOOD EXPERIMENT BUT EXPENSIVE OPERATION ========
+        /*
         int minDisparity = 0;
         int numDisparities = 16 * 16; // 160 disparities
         int blockSize = 9;            // INCREASED: A large block size (15x15) grabs more road texture
@@ -169,6 +191,36 @@ public:
             10,
             50,
             2,
+            cv::StereoSGBM::MODE_SGBM_3WAY);
+
+            */
+
+        //============ CONFIG B : ========================
+        const int minDisparity = 0;
+
+        // Number of disparity candidates: 16 * 14 = 224
+        const int numDisparities = 16 * 14; // effect: approximate minimum measurable distance
+
+        const int blockSize = 5;
+
+        // Input images are converted to grayscale before stereo_->compute().
+        const int cn = 1;
+
+        // OpenCV recommended smoothness penalties
+        const int P1 = 8 * cn * blockSize * blockSize;
+        const int P2 = 32 * cn * blockSize * blockSize;
+
+        stereo_ = cv::StereoSGBM::create(
+            minDisparity,
+            numDisparities,
+            blockSize,
+            P1,
+            P2,
+            1,  // disp12MaxDiff
+            63, // preFilterCap
+            10, // uniquenessRatio
+            50, // speckleWindowSize
+            2,  // speckleRange
             cv::StereoSGBM::MODE_SGBM_3WAY);
 
         /*
@@ -222,6 +274,32 @@ private:
         const sensor_msgs::msg::Image::ConstSharedPtr msg_left,
         const sensor_msgs::msg::Image::ConstSharedPtr msg_right)
     {
+
+        // ================ EXECUTITON TIME PERFROMANCE ============
+        using Clock = std::chrono::steady_clock;
+
+        const auto callback_start = Clock::now();
+
+        auto stage_start = Clock::now();
+
+        std::vector<std::pair<std::string, double>> timings;
+
+        auto recordTime = [&](const std::string &name)
+        {
+            const auto now = Clock::now();
+
+            const double elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                    now - stage_start)
+                    .count();
+
+            timings.emplace_back(name, elapsed_ms);
+
+            stage_start = now;
+        };
+
+        // ======================================================
+
         // Drop incoming pair if the previous frame is still computing
         if (is_cam_processing_.exchange(true))
         {
@@ -253,8 +331,6 @@ private:
             this->get_logger(),
             "ROS clock - camera timestamp: %.3f ms",
             clock_difference_ms);
-
-        const auto callback_start = std::chrono::steady_clock::now();
 
         // ============ SIMULATION TIME DIAGNOSTIC ============
 
@@ -332,17 +408,17 @@ private:
                                msg_right,
                                "bgr8")
                                ->image;
+            recordTime("Image conversion");
 
             // ========= DEBUG ======
             // Refresh with the current camera frame even if later processing rejects it.
             // cv::imshow("Desired Lane Trajectory", image_bgr8);
             // cv::waitKey(1);
             // ===============
-            using Clock_debug = std::chrono::steady_clock; // for timstamp measuring using cpu ticks in std::milli resolution storered in double tpye
-            std::exception_ptr stereo_exception;           // for proagation exception from child thread in ordr to not call std::termiante() when exception occured in child thread
-            cv::Mat output_cloud;                          // stadlon resources of child thread output
+
+            std::exception_ptr stereo_exception; // for proagation exception from child thread in ordr to not call std::termiante() when exception occured in child thread
+            cv::Mat output_cloud;                // stadlon resources of child thread output
             double stereo_ms = 0.0;
-            const auto parallel_start = Clock_debug::now();
 
             std::thread to_XYZ_transfrom_thread( // Constructing std::thread starts the new thread, to_XYZ_transfrom_thread start exectution from constructing
                 [this,
@@ -355,12 +431,9 @@ private:
                     try
                     {
 
-                        const auto child_thread_start = Clock_debug::now();
+                        cv::Mat cloud_buffer; // we iniitlaizate it via in pinHole2XYZ
 
-                        cv::Mat cloud_buffer = cv::Mat::zeros( //...
-                            left.size(),
-                            CV_32FC3);
-
+                        const auto stereo_start = Clock::now();
                         // invokint thread func
 
                         // // TRANSFORMING  (u,v) w coorinate into XYZ (camera framte)
@@ -371,10 +444,10 @@ private:
                             camera_params_,
                             cloud_buffer);
 
-                        const auto finish = Clock_debug::now();
-                        stereo_ms = std::chrono::duration<double, std::milli>(
-                                        finish - child_thread_start)
-                                        .count();
+                        stereo_ms =
+                            std::chrono::duration<double, std::milli>(
+                                Clock::now() - stereo_start)
+                                .count();
                     }
                     catch (...)
                     {
@@ -459,9 +532,16 @@ private:
                 cv::Scalar(0, 255, 0),
                 2);
 
-            cv::imshow("ROI Debug View", debug_image);
-            // cv::waitKey(1); //TODO:recomment
-            //  --------------------------------
+            // cv::imshow("ROI Debug View", debug_image);
+
+            publishDebugImage(
+                debug_image,
+                msg_left->header,
+                "bgr8",
+                white_pixels_image_pub_);
+
+            recordTime("Debug image publishing");
+            //   --------------------------------
 
             cv::Mat mask_roi = mask(roi_area); // applying boundary
 
@@ -505,8 +585,9 @@ private:
                     std::cerr << "error in creating matrix of extracted white points" << std::endl;
                 }
             }
+            recordTime("White-pixel extraction");
 
-            showExtractedWhitePixels(white_line_imgL);
+            // showExtractedWhitePixels(white_line_imgL);
 
             // Optional: Visual debug windows
             // cv::imshow("Original Frame", image_bgr8);
@@ -514,10 +595,16 @@ private:
             // cv::waitKey(0);
 
             // Lane detection has completed
-            const auto lane_finished = Clock_debug::now();
+
             // wating for 'to_XYZ_transfrom_thread finish w .join()
             to_XYZ_transfrom_thread.join(); // TODO: checkin joinable ??
-            // checking any exception occoured i child thread.
+
+            RCLCPP_INFO(
+                this->get_logger(),
+                "pinHole2XYZ execution time: %.2f ms",
+                stereo_ms);
+
+            // checking any exception occoured in child thread.
             if (stereo_exception)
             {
                 std::rethrow_exception(stereo_exception); // who chacting?
@@ -535,25 +622,6 @@ private:
                 return;
             }
 
-            const auto parallel_finished = Clock_debug::now();
-
-            const double lane_ms =
-                std::chrono::duration<double, std::milli>(
-                    lane_finished - parallel_start)
-                    .count();
-
-            const double parallel_ms =
-                std::chrono::duration<double, std::milli>(
-                    parallel_finished - parallel_start)
-                    .count();
-
-            RCLCPP_INFO(
-                this->get_logger(),
-                "Lane: %.2f ms | Stereo: %.2f ms | Combined: %.2f ms",
-                lane_ms,
-                stereo_ms,
-                parallel_ms);
-
             RoadPlane plane_for_lane_fit_tmp;
 
             plane_for_lane_fit_tmp.normal = cv::Vec3d(
@@ -563,8 +631,21 @@ private:
 
             plane_for_lane_fit_tmp.d = smoothed_plane_.D;
 
-            std::vector<LanePolynomial> whiteCurveParams =
-                fitLanePolynomialOpenCV(white_line_imgL, point_cloud_3D_, laneW, camera_params_, plane_for_lane_fit_tmp);
+            auto fit_start = Clock::now();
+
+            std::vector<LanePolynomial>
+                whiteCurveParams =
+                    fitLanePolynomialOpenCV(white_line_imgL, point_cloud_3D_, laneW, camera_params_, plane_for_lane_fit_tmp);
+            recordTime("Polynomial fitting");
+
+            const double fit_time_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - fit_start)
+                    .count();
+            RCLCPP_INFO(
+                this->get_logger(),
+                "fitLanePolynomialOpenCV(): %.2f ms",
+                fit_time_ms);
 
             // Use params_for_use for drawing/processing.
             // ============== DEBUG ================= ======== ========
@@ -573,9 +654,21 @@ private:
 
             // ============== ROAD PARAMS ================= ======== ========
 
+            auto point_cloud_conv_start = Clock::now();
             // 1. Convert the existing CV_32FC3 point cloud to CV_64FC3 for detectRoad()
             cv::Mat_<cv::Vec3d> XYZ_cam;
             point_cloud_3D_.convertTo(XYZ_cam, CV_64FC3);
+            recordTime("Point-cloud conversion");
+
+            const double point_cloud_conv_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - point_cloud_conv_start)
+                    .count();
+
+            RCLCPP_INFO(
+                this->get_logger(),
+                "point_cloud_conv_ms : % .2f ms ",
+                point_cloud_conv_ms);
 
             // 2. Declare an EMPTY RoadPlane object
             RoadPlane dynamic_road_plane;
@@ -583,10 +676,23 @@ private:
             // 3. INVOKE THE FUNCTION: We pass dynamic_road_plane into detectRoad.
             // Because it is passed by reference, the RANSAC loop inside detectRoad
             // actively fills dynamic_road_plane with the A, B, C, and D values.
+            auto road_start = Clock::now();
+
             bool road_found = detectRoad(dynamic_road_plane, XYZ_cam);
+            recordTime("Road-plane detection");
+
+            const double road_time_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - road_start)
+                    .count();
+
+            RCLCPP_INFO(
+                this->get_logger(),
+                "detectRoad(): %.2f ms",
+                road_time_ms);
 
             // Apply a smoothing factor (alpha between 0.1 and 0.2 works best for 30Hz)
-            double alpha = 0.05;
+            double alpha = 0.5; // 0.05
             // Create a temporary RoadPlane structure using the smoothed values
             RoadPlane final_plane;
 
@@ -692,8 +798,8 @@ else
                 // Existing trajectory generation, visualization, and publishing code.
 
                 // Refresh again so the successful frame shows the trajectory overlay.
-                cv::imshow("Desired Lane Trajectory", image_bgr8);
-                cv::waitKey(1);
+                // cv::imshow("Desired Lane Trajectory", image_bgr8);
+                // cv::waitKey(1);
             }
             else
             {
@@ -702,10 +808,19 @@ else
                     "Lane fit rejected; displaying the camera frame without a trajectory.");
             }
 
+            // Publish the image every frame.
+            // If trajectory generation succeeded, it contains the overlay.
+            publishDebugImage(
+                image_bgr8,
+                msg_left->header,
+                "bgr8",
+                desired_trajectory_image_pub_);
+
             // ONLY draw if the polynomial was successfully solved or buffered
             if (whiteCurveParams[0].isValid)
             {
                 DepthRange lane_depths = extractLaneDepthRange(white_line_pts, point_cloud_3D_);
+                recordTime("Lane-depth extraction");
 
                 // DEBUG
                 std::cout << "whiteCurveParams is valid" << std::endl;
@@ -717,6 +832,13 @@ else
                     camera_params_,
                     whiteCurveParams,
                     lane_depths.max_z); // <--- CLAMPS TO ACTUAL DETECTED DATA NOTE: this is note used..
+                recordTime("Desired trajectory generation");
+
+                publishDebugImage(
+                    image_bgr8,
+                    msg_left->header,
+                    "bgr8",
+                    desired_trajectory_image_pub_);
 
                 // ================= COLLECT RAW WHITE 3D POINTS =================
                 std::vector<cv::Vec3f> raw_white_3d;
@@ -738,7 +860,7 @@ else
                     whiteCurveParams.size() > 1 &&
                     whiteCurveParams[1].isValid;
 
-                BirdEyeViewVisualizer::draw(
+                cv::Mat bev_img = BirdEyeViewVisualizer::draw(
                     new_trajectory,
                     whiteCurveParams[0].a2,
                     whiteCurveParams[0].a1,
@@ -749,6 +871,15 @@ else
                     second_poly_valid ? whiteCurveParams[1].a2 : 0.0,
                     second_poly_valid ? whiteCurveParams[1].a1 : 0.0,
                     second_poly_valid ? whiteCurveParams[1].a0 : 0.0);
+
+                recordTime("BEV generation");
+
+                // Publish BEV image
+                publishDebugImage(
+                    bev_img,
+                    msg_left->header,
+                    "bgr8",
+                    birdview_image_pub_);
 
                 // ============= PERFOMING TRANSFROMATION (CAM2ENU) DUE TO CLOSELY REALATED TIMESTAMP OF SENSOR =======
 
@@ -788,12 +919,57 @@ else
                         new_trajectory,
                         closest_pose,
                         T_cam2body_);
+                    recordTime("Camera-to-ENU transformation");
 
                     if (!desired_enu.xyz_enu.empty())
                     {
+                        // Current simulator time immediately before publishing.
+                        const rclcpp::Time publish_sim_time =
+                            this->get_clock()->now();
+
+                        // Age of the original camera measurement at publication time.
+                        const double image_to_publish_age_ms =
+                            (publish_sim_time - camera_stamp).seconds() * 1000.0;
+
+                        // Simulator time elapsed since stereo_callback() started.
+                        const double callback_to_publish_sim_ms =
+                            (publish_sim_time - now).seconds() * 1000.0;
+
+                        // Actual elapsed wall-clock time since callback entry.
+                        const double callback_to_publish_wall_ms =
+                            std::chrono::duration<double, std::milli>(
+                                Clock::now() - callback_start)
+                                .count();
+
+                        RCLCPP_INFO(
+                            this->get_logger(),
+                            "========== ENU TRAJECTORY PUBLISH ==========");
+
+                        RCLCPP_INFO(
+                            this->get_logger(),
+                            "Image age at callback entry: %.2f ms",
+                            camera_age_ms);
+
+                        RCLCPP_INFO(
+                            this->get_logger(),
+                            "Image age at ENU publication: %.2f ms",
+                            image_to_publish_age_ms);
+
+                        RCLCPP_INFO(
+                            this->get_logger(),
+                            "Callback processing until publication (sim time): %.2f ms",
+                            callback_to_publish_sim_ms);
+
+                        RCLCPP_INFO(
+                            this->get_logger(),
+                            "Callback processing until publication (wall time): %.2f ms",
+                            callback_to_publish_wall_ms);
+
                         publishDesiredTrajectoryENU(
                             desired_enu,
                             msg_left->header.stamp);
+
+                        recordTime("ENU publishing");
                     }
                 }
                 else
@@ -805,13 +981,40 @@ else
                 }
 
                 // VISUAL DEBUG: Display the rendered trajectory on screen
-                cv::imshow("Desired Lane Trajectory", image_bgr8);
-                cv::waitKey(1); // Refresh window TODO!
+                // cv::imshow("Desired Lane Trajectory", image_bgr8);
+                // cv::waitKey(1); // Refresh window TODO!
             }
             if (!road_found)
             {
                 RCLCPP_WARN(this->get_logger(), "Road plane not detected. Skipping trajectory projection for this frame to prevent jitter.");
             }
+
+            // =============== DEBUG FOR EXECTUTION TIME ==========
+
+            recordTime("Callback remaining operations");
+
+            const auto callback_end = Clock::now();
+
+            const double processing_ms =
+                std::chrono::duration<double, std::milli>(
+                    callback_end - callback_start)
+                    .count();
+
+            RCLCPP_INFO(this->get_logger(), "========== EXECUTION TIMES ==========");
+
+            for (const auto &[operation, elapsed_ms] : timings)
+            {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "%-65s : %.2f ms",
+                    operation.c_str(),
+                    elapsed_ms);
+            }
+
+            RCLCPP_INFO(
+                this->get_logger(),
+                "TOTAL CALLBACK : %.2f ms",
+                processing_ms);
         }
         catch (const cv_bridge::Exception &e)
         {
@@ -953,6 +1156,35 @@ else
         {
             ekf_buffer_.pop_front();
         }
+    }
+
+    // ======================== DEBUG IMAGE PUBLISHERS ========================
+
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+        birdview_image_pub_;
+
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+        white_pixels_image_pub_;
+
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+        desired_trajectory_image_pub_;
+
+    void publishDebugImage(
+        const cv::Mat &image,
+        const std_msgs::msg::Header &header,
+        const std::string &encoding,
+        const rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr &publisher)
+    {
+        if (image.empty())
+            return;
+
+        auto msg = cv_bridge::CvImage(
+                       header,
+                       encoding,
+                       image)
+                       .toImageMsg();
+
+        publisher->publish(*msg);
     }
 };
 
